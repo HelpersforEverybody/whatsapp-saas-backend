@@ -1,24 +1,15 @@
 // src/components/OrderCard.jsx
 import React from 'react';
 
-const STATUS_FLOW = [
-  { key: 'received', label: 'Received' },
-  { key: 'accepted', label: 'Accept' },
-  { key: 'packed', label: 'Packed' },
-  { key: 'out-for-delivery', label: 'Out for delivery' },
-  { key: 'delivered', label: 'Delivered' }
-];
-
 export default function OrderCard({ order, onJoin = () => {}, onUpdate = () => {} }) {
   const { _id, customerName, phone, items = [], status, total, createdAt } = order;
 
   const canUpdateTo = (target) => {
-    // allow update if target differs (you can add extra rules here)
     return status !== target;
   };
 
   return (
-    <div style={{
+    <div data-order-id={_id} style={{
       border: '1px solid #eee',
       borderRadius: 8,
       padding: 12,
@@ -36,14 +27,13 @@ export default function OrderCard({ order, onJoin = () => {}, onUpdate = () => {
 
         <div style={{ textAlign: 'right' }}>
           <div style={{ fontSize: 13, marginBottom: 8 }}>
-            Status: <strong>{status}</strong>
+            Status: <strong className="order-status">{status}</strong>
           </div>
           <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginBottom: 6 }}>
             <button onClick={() => onJoin(_id)} style={{ padding: '6px 8px', borderRadius: 6 }}>Join</button>
           </div>
 
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-            {/* Buttons for common statuses */}
             <button
               disabled={!canUpdateTo('accepted')}
               onClick={() => onUpdate('accepted')}
