@@ -1,12 +1,14 @@
-// server.js — Full backend with Shop & Menu support + WhatsApp commands + Socket.io
+// server.js — backend with Shop/Menu + WhatsApp + Socket.io + JWT admin login
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const mongoose = require('mongoose');
 const app = express();
 const http = require('http');
-const server = http.createServer(app); // Create HTTP server for Socket.io
+const server = http.createServer(app);
 const { Server } = require('socket.io');
+const jwt = require('jsonwebtoken');
+
 const io = new Server(server, {
   cors: {
     origin: '*', // change to your frontend URL in production
@@ -35,22 +37,51 @@ io.on('connection', (socket) => {
   });
 });
 
-// Helper function to emit status updates
+// Helper to emit status updates
 function emitOrderUpdate(orderId, payload) {
   io.to(`order:${orderId}`).emit('orderStatusUpdate', payload);
 }
 
-/* ----------------- API key middleware ----------------- */
-const requireApiKey = (req, res, next) => {
+/* ----------------- Auth helpers ----------------- */
+const API_KEY_ENV = (process.env.API_KEY || '').toString().trim();
+const JWT_SECRET = (process.env.JWT_SECRET || '').toString().trim();
+const ADMIN_PASSWORD = (process.env.ADMIN_PASSWORD || '').toString().trim();
+
+// verify JWT and return decoded or null
+function verifyJwtToken(authHeader) {
+  if (!authHeader) return null;
+  const parts = authHeader.split(/\s+/);
+  if (parts.length !== 2 || parts[0].toLowerCase() !== 'bearer') return null;
+  const token = parts[1];
+  try {
+    const decoded = jwt.verify(token, JWT_SECRET);
+    return decoded;
+  } catch (e) {
+    return null;
+  }
+}
+
+// middleware: allow either x-api-key equal to API_KEY or a valid Bearer JWT
+const requireApiKeyOrJwt = (req, res, next) => {
   const key = (req.get('x-api-key') || req.query.api_key || '').toString().trim();
-  const envKey = (process.env.API_KEY || '').toString().trim();
-  if (!envKey) {
+  if (!API_KEY_ENV) {
     return res.status(500).json({ error: 'server misconfigured: API_KEY missing' });
   }
-  if (!key || key !== envKey) {
-    return res.status(401).json({ error: 'unauthorized' });
+
+  // header Authorization: Bearer <token>
+  const authHeader = (req.get('authorization') || '').toString().trim();
+  if (authHeader) {
+    const decoded = verifyJwtToken(authHeader);
+    if (decoded && decoded.role === 'admin') {
+      req.admin = decoded; // attach admin info if needed
+      return next();
+    }
   }
-  next();
+
+  // fallback to x-api-key
+  if (key && key === API_KEY_ENV) return next();
+
+  return res.status(401).json({ error: 'unauthorized' });
 };
 
 /* ----------------- MongoDB connection ----------------- */
@@ -63,7 +94,6 @@ mongoose
   .catch((err) => console.error('❌ MongoDB connection error:', err));
 
 /* ----------------- Models ----------------- */
-
 // Shop
 const shopSchema = new mongoose.Schema({
   name: { type: String, required: true },
@@ -131,27 +161,34 @@ async function sendWhatsAppMessageSafe(toPhone, text) {
     return null;
   }
 }
-/* Delete menu item (merchant) */
-app.delete('/api/shops/:shopId/items/:itemId', requireApiKey, async (req, res) => {
+
+/* ----------------- Auth endpoints ----------------- */
+
+/* Admin login -> returns JWT (use ADMIN_PASSWORD) */
+app.post('/auth/login', (req, res) => {
   try {
-    const { shopId, itemId } = req.params;
-    const item = await MenuItem.findOneAndDelete({ _id: itemId, shop: shopId });
-    if (!item) return res.status(404).json({ error: 'not found' });
-    res.json({ ok: true });
+    const { password } = req.body || {};
+    if (!ADMIN_PASSWORD) return res.status(500).json({ error: 'server misconfigured: ADMIN_PASSWORD missing' });
+    if (!JWT_SECRET) return res.status(500).json({ error: 'server misconfigured: JWT_SECRET missing' });
+    if (!password || password !== ADMIN_PASSWORD) {
+      return res.status(401).json({ error: 'invalid credentials' });
+    }
+    // sign JWT (role: admin). Keep reasonable TTL (e.g., 12 hours)
+    const token = jwt.sign({ role: 'admin', issuedAt: Date.now() }, JWT_SECRET, { expiresIn: '12h' });
+    return res.json({ token, expiresIn: 12 * 3600 });
   } catch (e) {
-    console.error('Delete item error', e);
-    res.status(500).json({ error: 'failed' });
+    console.error('Login error', e);
+    return res.status(500).json({ error: 'server error' });
   }
 });
 
-
-/* ----------------- Routes ----------------- */
+/* ----------------- Routes (protected where required) ----------------- */
 
 /* Health check */
 app.get('/status', (req, res) => res.json({ status: 'ok', time: new Date() }));
 
-/* Create Shop */
-app.post('/api/shops', requireApiKey, async (req, res) => {
+/* Create Shop (merchant) */
+app.post('/api/shops', requireApiKeyOrJwt, async (req, res) => {
   try {
     const { name, phone, description } = req.body;
     if (!name || !phone) return res.status(400).json({ error: 'name and phone required' });
@@ -163,8 +200,8 @@ app.post('/api/shops', requireApiKey, async (req, res) => {
   }
 });
 
-/* Add Menu Item */
-app.post('/api/shops/:shopId/items', requireApiKey, async (req, res) => {
+/* Add Menu Item (merchant) */
+app.post('/api/shops/:shopId/items', requireApiKeyOrJwt, async (req, res) => {
   try {
     const { name, price } = req.body;
     if (!name) return res.status(400).json({ error: 'name required' });
@@ -177,8 +214,8 @@ app.post('/api/shops/:shopId/items', requireApiKey, async (req, res) => {
   }
 });
 
-/* Edit menu item */
-app.patch('/api/shops/:shopId/items/:itemId', requireApiKey, async (req, res) => {
+/* Edit menu item (merchant) */
+app.patch('/api/shops/:shopId/items/:itemId', requireApiKeyOrJwt, async (req, res) => {
   try {
     const update = req.body;
     const item = await MenuItem.findOneAndUpdate({ _id: req.params.itemId, shop: req.params.shopId }, update, { new: true });
@@ -190,7 +227,7 @@ app.patch('/api/shops/:shopId/items/:itemId', requireApiKey, async (req, res) =>
   }
 });
 
-/* List menu */
+/* List menu (public) */
 app.get('/api/shops/:shopId/menu', async (req, res) => {
   try {
     const items = await MenuItem.find({ shop: req.params.shopId, available: true }).select('-__v').lean();
@@ -201,7 +238,7 @@ app.get('/api/shops/:shopId/menu', async (req, res) => {
   }
 });
 
-/* List all shops */
+/* List all shops (public) */
 app.get('/api/shops', async (req, res) => {
   try {
     const shops = await Shop.find().select('-__v').lean();
@@ -211,8 +248,8 @@ app.get('/api/shops', async (req, res) => {
   }
 });
 
-/* Create order */
-app.post('/api/orders', requireApiKey, async (req, res) => {
+/* Create order (public via UI or webhook) */
+app.post('/api/orders', requireApiKeyOrJwt, async (req, res) => {
   try {
     const { shop: shopId, customerName, phone, items = [] } = req.body;
     if (!customerName || !phone) return res.status(400).json({ error: 'customerName and phone required' });
@@ -226,8 +263,8 @@ app.post('/api/orders', requireApiKey, async (req, res) => {
   }
 });
 
-/* List orders */
-app.get('/api/orders', requireApiKey, async (req, res) => {
+/* List orders (merchant) */
+app.get('/api/orders', requireApiKeyOrJwt, async (req, res) => {
   try {
     const { shopId } = req.query;
     const q = shopId ? { shop: shopId } : {};
@@ -239,7 +276,7 @@ app.get('/api/orders', requireApiKey, async (req, res) => {
   }
 });
 
-/* Get single order */
+/* Get single order (public) */
 app.get('/api/orders/:id', async (req, res) => {
   try {
     const order = await Order.findById(req.params.id).lean();
@@ -251,7 +288,7 @@ app.get('/api/orders/:id', async (req, res) => {
 });
 
 /* Merchant: list shop orders */
-app.get('/api/shops/:shopId/orders', requireApiKey, async (req, res) => {
+app.get('/api/shops/:shopId/orders', requireApiKeyOrJwt, async (req, res) => {
   try {
     const orders = await Order.find({ shop: req.params.shopId }).sort({ createdAt: -1 }).limit(200);
     res.json(orders);
@@ -262,7 +299,7 @@ app.get('/api/shops/:shopId/orders', requireApiKey, async (req, res) => {
 });
 
 /* Update order status (merchant) */
-app.patch('/api/orders/:id/status', requireApiKey, async (req, res) => {
+app.patch('/api/orders/:id/status', requireApiKeyOrJwt, async (req, res) => {
   try {
     const { status } = req.body;
     if (!status) return res.status(400).json({ error: 'status required' });
@@ -270,7 +307,6 @@ app.patch('/api/orders/:id/status', requireApiKey, async (req, res) => {
     const order = await Order.findByIdAndUpdate(req.params.id, { status }, { new: true });
     if (!order) return res.status(404).json({ error: 'not found' });
 
-    // notify customer (non-blocking)
     sendWhatsAppMessageSafe(order.phone, `Order ${order._id} status updated: ${status}`).catch(() => {});
 
     // Emit Socket.io update
@@ -295,6 +331,7 @@ app.patch('/api/orders/:id/status', requireApiKey, async (req, res) => {
 });
 
 /* ----------------- Twilio webhook for WhatsApp (public) ----------------- */
+/* Supports: menu, order, status */
 app.post('/webhook/whatsapp', async (req, res) => {
   const from = (req.body.From || req.body.from || '').toString();
   const rawBody = (req.body.Body || req.body.body || '').toString().trim();
