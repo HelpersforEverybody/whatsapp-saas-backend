@@ -5,10 +5,7 @@ import OrderCard from '../components/OrderCard';
 
 // at top of Dashboard.jsx (replace existing API_BASE line)
 // fallback-safe API base (handles undefined)
-const API_BASE = (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_API_BASE)
-  ? import.meta.env.VITE_API_BASE
-  : 'https://whatsapp-saas-backend-f9ot.onrender.com';
-
+const API_BASE = import.meta.env.VITE_API_BASE || 'https://whatsapp-saas-backend-f9ot.onrender.com';
 
 export default function Dashboard() {
   const socketUrl = API_BASE || window.location.origin; // points to backend
