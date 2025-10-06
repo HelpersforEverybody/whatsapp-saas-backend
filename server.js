@@ -131,6 +131,19 @@ async function sendWhatsAppMessageSafe(toPhone, text) {
     return null;
   }
 }
+/* Delete menu item (merchant) */
+app.delete('/api/shops/:shopId/items/:itemId', requireApiKey, async (req, res) => {
+  try {
+    const { shopId, itemId } = req.params;
+    const item = await MenuItem.findOneAndDelete({ _id: itemId, shop: shopId });
+    if (!item) return res.status(404).json({ error: 'not found' });
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('Delete item error', e);
+    res.status(500).json({ error: 'failed' });
+  }
+});
+
 
 /* ----------------- Routes ----------------- */
 
