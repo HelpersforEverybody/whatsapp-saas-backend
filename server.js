@@ -200,6 +200,20 @@ const requireOwner = async (req, res, next) => {
   next();
 };
 
+// GET /api/me/shops
+// Returns shops owned by the authenticated merchant (requires merchant JWT)
+app.get('/api/me/shops', requireOwner, async (req, res) => {
+  try {
+    const ownerId = req.merchantId;
+    const shops = await Shop.find({ owner: ownerId }).select('-__v').lean();
+    return res.json(shops);
+  } catch (err) {
+    console.error('Get my shops error:', err);
+    return res.status(500).json({ error: 'failed to load shops' });
+  }
+});
+
+
 /* ----------------- Auth endpoints ----------------- */
 
 // Admin login (existing admin password method)
