@@ -28,7 +28,7 @@ export default function ShopManager() {
   async function loadShops() {
     try {
       const res = await fetch(`${API_BASE}/api/shops`);
-      if (!res.ok) throw new Error("Failed");
+      if (!res.ok) throw new Error("Failed to load shops");
       setShops(await res.json());
     } catch (e) {
       console.error("Load shops error", e);
@@ -36,14 +36,33 @@ export default function ShopManager() {
     }
   }
 
-  useEffect(() => { loadShops(); }, []);
+  useEffect(() => {
+    loadShops();
+  }, []);
+
+  // auto-open if ?open=<shopId> present in URL
+  useEffect(() => {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const openId = params.get("open");
+      if (openId) {
+        // Give shops a short time to load (if loading from network)
+        setTimeout(() => {
+          loadMenu(openId);
+        }, 250);
+      }
+    } catch (e) {
+      // ignore
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // load menu for shopId
   async function loadMenu(shopId) {
     setLoading(true);
     try {
       const res = await fetch(`${API_BASE}/api/shops/${shopId}/menu`);
-      if (!res.ok) throw new Error("Failed");
+      if (!res.ok) throw new Error("Failed to load menu");
       const items = await res.json();
       setMenu(items);
       setSelectedShop(shopId);
