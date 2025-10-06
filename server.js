@@ -286,23 +286,26 @@ app.patch('/api/orders/:id/status', requireApiKey, async (req, res) => {
   try {
     const { status } = req.body;
     if (!status) return res.status(400).json({ error: 'status required' });
+
     const order = await Order.findByIdAndUpdate(req.params.id, { status }, { new: true });
     if (!order) return res.status(404).json({ error: 'not found' });
 
-    // notify customer
+    // notify customer (non-blocking)
     sendWhatsAppMessageSafe(order.phone, `Order ${order._id} status updated: ${status}`).catch(() => {});
 
-    // Emit socket update for status change
-    emitOrderUpdate(order._id.toString(), {
-      orderId: order._id.toString(),
-      status,
-      at: new Date().toISOString(),
-      meta: {
-        note: `Status updated via API: ${status}`,
-        restaurantId: order.shop ? order.shop.toString() : null,
-        userPhone: order.phone
-      }
-    });
+    // Emit Socket.io update to any connected clients in the order room
+    try {
+      const payload = {
+        orderId: order._id.toString(),
+        status,
+        at: new Date().toISOString(),
+        meta: { note: 'updated via merchant dashboard', shop: order.shop ? order.shop.toString() : null }
+      };
+      emitOrderUpdate(order._id.toString(), payload);
+      console.log('Emitted orderStatusUpdate for', order._id.toString(), payload);
+    } catch (e) {
+      console.error('Socket emit error:', e);
+    }
 
     res.json(order);
   } catch (err) {
@@ -310,6 +313,7 @@ app.patch('/api/orders/:id/status', requireApiKey, async (req, res) => {
     res.status(400).json({ error: 'invalid request' });
   }
 });
+
 
 /* ----------------- Twilio webhook for WhatsApp (public) ----------------- */
 /* Supports:
