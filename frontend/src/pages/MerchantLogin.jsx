@@ -1,4 +1,4 @@
-// src/pages/MerchantLogin.jsx
+// frontend/src/pages/MerchantLogin.jsx
 import React, { useState } from "react";
 import { useNavigate } from "react-router-dom";
 
@@ -17,7 +17,7 @@ export default function MerchantLogin() {
       const res = await fetch(`${API_BASE}/auth/login`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password }),
+        body: JSON.stringify({ email, password })
       });
 
       const text = await res.text();
@@ -31,45 +31,34 @@ export default function MerchantLogin() {
         return;
       }
 
-      if (!json || !json.token) {
-        console.error("Login success but missing token", json);
-        alert("Login returned no token. Check server response in console.");
-        setLoading(false);
-        return;
+      // Save token & user for other pages
+      if (json.token) {
+        localStorage.setItem("auth_token", json.token);
       }
-
-      // Save token & metadata for other pages to use
-      localStorage.setItem("auth_token", json.token);
       if (json.role) localStorage.setItem("auth_role", json.role);
-      if (json.merchant || json.user) localStorage.setItem("auth_user", JSON.stringify(json.merchant || json.user));
+      if (json.user) localStorage.setItem("auth_user", JSON.stringify(json.user));
+      if (json.merchant) localStorage.setItem("auth_user", JSON.stringify(json.merchant));
 
-      // also keep admin_api_key compatibility if your app uses that
+      // also keep admin_api_key compatibility if present (older UI used this)
       if (json.apiKey) localStorage.setItem("admin_api_key", json.apiKey);
 
-      // best-effort navigate to owner dashboard
+      // navigate to owner dashboard (old behavior)
       try {
         navigate("/owner-dashboard");
-        // If navigate does nothing (e.g. blocked), force full page load as fallback
-        setTimeout(() => {
-          if (window.location.pathname !== "/owner-dashboard") window.location.href = "/owner-dashboard";
-        }, 250);
       } catch (err) {
-        console.warn("navigate failed, forcing location:", err);
         window.location.href = "/owner-dashboard";
       }
     } catch (err) {
-      console.error("Login exception", err);
-      alert("Login failed: " + (err && err.message ? err.message : String(err)));
+      console.error("Login error", err);
+      alert("Login failed: " + (err.message || err));
     } finally {
       setLoading(false);
     }
   }
 
-  // optional: if user already logged in, redirect immediately
   React.useEffect(() => {
-    const t = localStorage.getItem("auth_token");
-    if (t) {
-      // token exists — go to dashboard
+    const token = localStorage.getItem("auth_token");
+    if (token) {
       try { navigate("/owner-dashboard"); } catch { window.location.href = "/owner-dashboard"; }
     }
     // eslint-disable-next-line
@@ -85,6 +74,10 @@ export default function MerchantLogin() {
           <button type="submit" className="px-4 py-2 bg-blue-600 text-white rounded" disabled={loading}>
             {loading ? "Signing..." : "Sign in"}
           </button>
+          <button type="button" className="px-4 py-2 border rounded" onClick={() => {
+            // quick prefill demo accounts used previously (optional)
+            setEmail("owner1@example.com"); setPassword("password123");
+          }}>Demo</button>
         </div>
       </form>
     </div>
