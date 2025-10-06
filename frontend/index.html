@@ -1,7 +1,7 @@
 <!doctype html>
 <html>
   <head>
-    <!-- rebuild trigger: update VITE_API_BASE -->
+    <!-- trigger rebuild: updated index.html with runtime backend patch -->
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Merchant Dashboard</title>
@@ -9,6 +9,52 @@
   </head>
   <body>
     <div id="root"></div>
+
+    <!-- ✅ Runtime API base definition -->
+    <script>
+      // set global runtime API base so React can read window.__API_BASE
+      window.__API_BASE = 'https://whatsapp-saas-backend-f9ot.onrender.com';
+    </script>
+
+    <!-- ✅ Runtime fix: rewrite undefined/api/... to backend -->
+    <script>
+      (function () {
+        const BACKEND = window.__API_BASE;
+        const orig = window.fetch.bind(window);
+
+        window.fetch = async function (input, init) {
+          try {
+            let url = typeof input === 'string' ? input : (input && input.url) || '';
+
+            // Rewrite any broken undefined/api/ or /api/ paths
+            if (url.includes('undefined/api/')) {
+              url = url.replace(/.*undefined\/api\//, BACKEND + '/api/');
+            }
+            if (url.startsWith('/api/')) url = BACKEND + url;
+            if (url.startsWith(window.location.origin + '/api/')) {
+              url = url.replace(window.location.origin, BACKEND);
+            }
+
+            // Inject API key if available
+            init = init || {};
+            init.headers = new Headers(init.headers || {});
+            const key = localStorage.getItem('admin_api_key') || '';
+            if (key && !init.headers.get('x-api-key')) {
+              init.headers.set('x-api-key', key);
+            }
+
+            return orig(url || input, init);
+          } catch (e) {
+            console.error('runtime fetch fix error', e);
+            return orig(input, init);
+          }
+        };
+
+        console.log('[runtime-fix] fetch patched ->', BACKEND);
+      })();
+    </script>
+
+    <!-- ✅ Vite entry point -->
     <script type="module" src="/src/main.jsx"></script>
   </body>
 </html>
