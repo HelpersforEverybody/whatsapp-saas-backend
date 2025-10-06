@@ -18,24 +18,25 @@ export default function OwnerDashboard() {
   }
 
   async function loadShops() {
-    setLoading(true);
-    try {
-      // public /api/shops returns all shops; owner-only shops can be filtered by querying for shops with owner = user,
-      // but we kept a simple approach: call /api/shops and then filter by owner if returned (owner field exists)
-      const res = await apiFetch("/api/shops");
-      if (!res.ok) throw new Error("Failed to load shops");
-      const data = await res.json();
-      // filter to shops where owner is present and current user owns (server doesn't provide userId here).
-      // Better: server could expose /api/me/shops — but for now, show shops (owner-created will include owner id)
-      setShops(data);
-      if (data.length) setSelectedShop(data[0]);
-    } catch (e) {
-      console.error(e);
-      alert("Failed to load shops");
-    } finally {
-      setLoading(false);
+  setLoading(true);
+  try {
+    // call owner-only endpoint
+    const res = await apiFetch("/api/me/shops");
+    if (!res.ok) {
+      if (res.status === 401) { alert("Please login (session expired)"); navigate("/merchant-login"); return; }
+      throw new Error("Failed to load shops");
     }
+    const data = await res.json();
+    setShops(data || []);
+    if (data && data.length) setSelectedShop(data[0]);
+  } catch (e) {
+    console.error(e);
+    alert("Failed to load shops");
+  } finally {
+    setLoading(false);
   }
+}
+
 
   async function loadOrdersForShop(shopId) {
     try {
