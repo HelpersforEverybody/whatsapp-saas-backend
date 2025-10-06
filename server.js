@@ -3,14 +3,59 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const mongoose = require('mongoose');
-
 const app = express();
+const http = require('http');
+const server = http.createServer(app); // Create HTTP server for Socket.io
+const { Server } = require('socket.io');
+const io = new Server(server, {
+  cors: {
+    origin: '*', // 🔸 Change to your frontend URL later
+    methods: ['GET', 'POST']
+  }
+});
 const PORT = process.env.PORT || 3000;
 
 /* ----------------- middleware ----------------- */
 app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
+
+// ---------------- SOCKET.IO SETUP ----------------
+io.on('connection', (socket) => {
+  console.log('Client connected:', socket.id);
+
+  socket.on('joinOrder', ({ orderId }) => {
+    if (!orderId) return;
+    socket.join(`order:${orderId}`);
+    console.log(`Socket ${socket.id} joined order room ${orderId}`);
+  });
+
+  socket.on('joinRestaurant', ({ restaurantId }) => {
+    if (!restaurantId) return;
+    socket.join(`restaurant:${restaurantId}`);
+    console.log(`Socket ${socket.id} joined restaurant room ${restaurantId}`);
+  });
+
+  socket.on('disconnect', () => {
+    console.log('Client disconnected:', socket.id);
+  });
+});
+
+// Helper function to emit status updates
+function emitOrderUpdate(orderId, payload) {
+  // Emit to order-specific room
+  io.to(`order:${orderId}`).emit('orderStatusUpdate', payload);
+
+  // Also emit to restaurant room if restaurantId present
+  if (payload && payload.meta && payload.meta.restaurantId) {
+    io.to(`restaurant:${payload.meta.restaurantId}`).emit('restaurantOrderUpdate', payload);
+  }
+
+  // Optionally emit to user room keyed by phone (if you use user rooms)
+  if (payload && payload.meta && payload.meta.userPhone) {
+    io.to(`user:${payload.meta.userPhone}`).emit('personalOrderUpdate', payload);
+  }
+}
 
 /* ----------------- API key middleware ----------------- */
 const requireApiKey = (req, res, next) => {
@@ -178,8 +223,22 @@ app.post('/api/orders', requireApiKey, async (req, res) => {
     if (!customerName || !phone) return res.status(400).json({ error: 'customerName and phone required' });
     const total = items.reduce((s, it) => s + Number(it.price || 0) * Number(it.qty || 0), 0);
     const order = await Order.create({ shop: shopId || null, customerName, phone, items, total });
+
     // Send confirmation to customer (non-blocking)
     sendWhatsAppMessageSafe(phone, `Hi ${customerName}, we received your order ${order._id}. Total: ₹${total}`).catch(() => {});
+
+    // Emit socket update for new order
+    emitOrderUpdate(order._id.toString(), {
+      orderId: order._id.toString(),
+      status: order.status,
+      at: new Date().toISOString(),
+      meta: {
+        note: 'Order created via API',
+        restaurantId: order.shop ? order.shop.toString() : null,
+        userPhone: order.phone
+      }
+    });
+
     res.status(201).json(order);
   } catch (err) {
     console.error('Create order error:', err);
@@ -229,8 +288,22 @@ app.patch('/api/orders/:id/status', requireApiKey, async (req, res) => {
     if (!status) return res.status(400).json({ error: 'status required' });
     const order = await Order.findByIdAndUpdate(req.params.id, { status }, { new: true });
     if (!order) return res.status(404).json({ error: 'not found' });
+
     // notify customer
     sendWhatsAppMessageSafe(order.phone, `Order ${order._id} status updated: ${status}`).catch(() => {});
+
+    // Emit socket update for status change
+    emitOrderUpdate(order._id.toString(), {
+      orderId: order._id.toString(),
+      status,
+      at: new Date().toISOString(),
+      meta: {
+        note: `Status updated via API: ${status}`,
+        restaurantId: order.shop ? order.shop.toString() : null,
+        userPhone: order.phone
+      }
+    });
+
     res.json(order);
   } catch (err) {
     console.error('Update status error:', err);
@@ -243,9 +316,12 @@ app.patch('/api/orders/:id/status', requireApiKey, async (req, res) => {
    - menu <shopPhone>
    - order <shopPhone> <itemExternalId> <qty>
    - status <orderId>
+   - accept <orderId>   (shop can accept an order via WhatsApp)
 */
 app.post('/webhook/whatsapp', async (req, res) => {
-  const from = (req.body.From || req.body.from || '').toString();
+  const fromRaw = (req.body.From || req.body.from || '').toString();
+  // normalize from: remove 'whatsapp:' prefix if present
+  const from = fromRaw.replace(/^whatsapp:/i, '').trim();
   const rawBody = (req.body.Body || req.body.body || '').toString().trim();
   console.log('Incoming WhatsApp:', from, rawBody);
 
@@ -288,7 +364,7 @@ app.post('/webhook/whatsapp', async (req, res) => {
           const orderPayload = {
             shop: shop._id,
             customerName: `WhatsApp:${from}`,
-            phone: from.replace(/^whatsapp:/, ''),
+            phone: from,
             items: [{ name: item.name, qty, price: item.price }],
           };
           const total = item.price * qty;
@@ -296,6 +372,18 @@ app.post('/webhook/whatsapp', async (req, res) => {
           // notify shop owner (optional)
           sendWhatsAppMessageSafe(shop.phone, `📥 New order ${order._id} from ${order.phone} — ${item.name} x${qty} — ₹${total}`).catch(() => {});
           twiml.message(`✅ Order placed: ${order._id}\nTotal: ₹${total}\nYou will receive updates here.`);
+
+          // Emit socket update for new order created via WhatsApp
+          emitOrderUpdate(order._id.toString(), {
+            orderId: order._id.toString(),
+            status: order.status,
+            at: new Date().toISOString(),
+            meta: {
+              note: 'Order created via WhatsApp',
+              restaurantId: shop._id.toString(),
+              userPhone: order.phone
+            }
+          });
         }
       }
 
@@ -307,9 +395,56 @@ app.post('/webhook/whatsapp', async (req, res) => {
       } catch (e) {
         twiml.message('Invalid order id.');
       }
+
+    } else if (cmd === 'accept' && parts[1]) {
+      // allow shop to accept an order via WhatsApp: accept <orderId>
+      // We ensure the sender is the shop's phone by matching 'from' against shop.phone
+      try {
+        const orderId = parts[1];
+        const order = await Order.findById(orderId);
+        if (!order) {
+          twiml.message(`Order ${orderId} not found.`);
+        } else if (!order.shop) {
+          twiml.message(`Order ${orderId} has no associated shop.`);
+        } else {
+          // load shop and compare sender
+          const shop = await Shop.findById(order.shop);
+          if (!shop) {
+            twiml.message('Associated shop not found.');
+          } else if (shop.phone.replace(/\D/g, '') !== from.replace(/\D/g, '')) {
+            // Sender is not shop owner/phone
+            // Note: phone formatting may differ; adjust comparisons as needed
+            twiml.message('You are not authorized to accept this order (sender mismatch).');
+          } else {
+            // update status
+            order.status = 'accepted';
+            await order.save();
+
+            // notify customer
+            sendWhatsAppMessageSafe(order.phone, `Your order ${order._id} has been accepted by ${shop.name}`).catch(() => {});
+            twiml.message(`Order ${order._id} accepted ✅`);
+
+            // Emit socket update for accepted status
+            emitOrderUpdate(order._id.toString(), {
+              orderId: order._id.toString(),
+              status: order.status,
+              at: new Date().toISOString(),
+              meta: {
+                note: 'Order accepted via WhatsApp',
+                restaurantId: shop._id.toString(),
+                userPhone: order.phone
+              }
+            });
+          }
+        }
+      } catch (e) {
+        console.error('Accept command error:', e);
+        twiml.message('Failed to accept order.');
+      }
+
     } else {
       twiml.message(
-        'Welcome. Commands:\n1) menu <shopPhone>\n2) order <shopPhone> <itemId> <qty>\n3) status <orderId>'
+        'Welcome. Commands:\n1) menu <shopPhone>\n2) order <shopPhone> <itemId> <qty>\n3) status <orderId>\n4) accept <orderId>  (shop only)'
       );
     }
   } catch (err) {
@@ -322,6 +457,4 @@ app.post('/webhook/whatsapp', async (req, res) => {
 });
 
 /* ----------------- Start server ----------------- */
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
-});
+server.listen(PORT, () => console.log(`Server running with Socket.io on port ${PORT}`));
