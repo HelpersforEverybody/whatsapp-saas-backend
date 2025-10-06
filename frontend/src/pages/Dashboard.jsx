@@ -4,9 +4,10 @@ import { useSocket } from '../hooks/useSocket';
 import OrderCard from '../components/OrderCard';
 
 // at top of Dashboard.jsx (replace existing API_BASE line)
+// fallback-safe API base (handles undefined)
 const API_BASE = (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_API_BASE)
   ? import.meta.env.VITE_API_BASE
-  : (window.__API_BASE || 'https://whatsapp-saas-backend-f9ot.onrender.com');
+  : 'https://whatsapp-saas-backend-f9ot.onrender.com';
 
 
 export default function Dashboard() {
