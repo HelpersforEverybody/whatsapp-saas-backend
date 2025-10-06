@@ -1,27 +1,74 @@
 // src/components/OrderCard.jsx
 import React from 'react';
 
-export default function OrderCard({ order, onJoin }) {
+const STATUS_FLOW = [
+  { key: 'received', label: 'Received' },
+  { key: 'accepted', label: 'Accept' },
+  { key: 'packed', label: 'Packed' },
+  { key: 'out-for-delivery', label: 'Out for delivery' },
+  { key: 'delivered', label: 'Delivered' }
+];
+
+export default function OrderCard({ order, onJoin = () => {}, onUpdate = () => {} }) {
+  const { _id, customerName, phone, items = [], status, total, createdAt } = order;
+
+  const canUpdateTo = (target) => {
+    // allow update if target differs (you can add extra rules here)
+    return status !== target;
+  };
+
   return (
     <div style={{
-      border: '1px solid #e5e7eb', padding: 12, borderRadius: 8, marginBottom: 10,
-      display: 'flex', justifyContent: 'space-between', alignItems: 'center'
+      border: '1px solid #eee',
+      borderRadius: 8,
+      padding: 12,
+      marginBottom: 10,
+      boxShadow: '0 2px 6px rgba(0,0,0,0.03)'
     }}>
-      <div>
-        <div style={{ fontWeight: 600 }}>{order.customerName} — {order.phone}</div>
-        <div style={{ fontSize: 13, color: '#555' }}>Status: <strong>{order.status}</strong></div>
-        <div style={{ fontSize: 13, color: '#555' }}>Total: ₹{order.total}</div>
-        <div style={{ fontSize: 13, color: '#666', marginTop: 6 }}>
-          {order.items?.map((it, i) => (<div key={i}>{it.name} x{it.qty}</div>))}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start' }}>
+        <div>
+          <div style={{ fontWeight: 700 }}>{customerName} <small style={{ color: '#666', marginLeft: 8 }}>{phone}</small></div>
+          <div style={{ fontSize: 13, color: '#444', marginTop: 6 }}>
+            {items.map((it, i) => <span key={i}>{it.name} x{it.qty}{i < items.length - 1 ? ', ' : ''}</span>)}
+          </div>
+          <div style={{ fontSize: 12, color: '#777', marginTop: 6 }}>Total: ₹{total} • Created: {new Date(createdAt).toLocaleString()}</div>
         </div>
-      </div>
 
-      <div>
-        <button onClick={() => onJoin(order._id)} style={{
-          padding: '8px 12px', borderRadius: 6, border: 'none', background: '#111827', color: '#fff'
-        }}>
-          Live
-        </button>
+        <div style={{ textAlign: 'right' }}>
+          <div style={{ fontSize: 13, marginBottom: 8 }}>
+            Status: <strong>{status}</strong>
+          </div>
+          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginBottom: 6 }}>
+            <button onClick={() => onJoin(_id)} style={{ padding: '6px 8px', borderRadius: 6 }}>Join</button>
+          </div>
+
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+            {/* Buttons for common statuses */}
+            <button
+              disabled={!canUpdateTo('accepted')}
+              onClick={() => onUpdate('accepted')}
+              style={{ padding: '6px 10px', borderRadius: 6 }}
+            >Accept</button>
+
+            <button
+              disabled={!canUpdateTo('packed')}
+              onClick={() => onUpdate('packed')}
+              style={{ padding: '6px 10px', borderRadius: 6 }}
+            >Packed</button>
+
+            <button
+              disabled={!canUpdateTo('out-for-delivery')}
+              onClick={() => onUpdate('out-for-delivery')}
+              style={{ padding: '6px 10px', borderRadius: 6 }}
+            >Out for delivery</button>
+
+            <button
+              disabled={!canUpdateTo('delivered')}
+              onClick={() => onUpdate('delivered')}
+              style={{ padding: '6px 10px', borderRadius: 6 }}
+            >Delivered</button>
+          </div>
+        </div>
       </div>
     </div>
   );
