@@ -11,7 +11,7 @@ export default function MerchantLogin() {
   const navigate = useNavigate();
 
   async function handleLogin(e) {
-    e.preventDefault();
+    e && e.preventDefault();
     setLoading(true);
     try {
       const res = await fetch(`${API_BASE}/auth/login`, {
@@ -31,17 +31,32 @@ export default function MerchantLogin() {
         return;
       }
 
-      // login success — expect { token, role, merchant/user }
-      if (json.token) {
-        localStorage.setItem("auth_token", json.token);
-        localStorage.setItem("auth_role", json.role || "merchant");
-        localStorage.setItem("auth_user", JSON.stringify(json.merchant || json.user || {}));
-        alert("Login successful");
-        navigate("/owner-dashboard");
+      if (!json || !json.token) {
+        console.error("Login success but missing token", json);
+        alert("Login returned no token. Check server response in console.");
+        setLoading(false);
         return;
       }
 
-      alert("Login returned unexpected response: " + JSON.stringify(json));
+      // Save token & metadata for other pages to use
+      localStorage.setItem("auth_token", json.token);
+      if (json.role) localStorage.setItem("auth_role", json.role);
+      if (json.merchant || json.user) localStorage.setItem("auth_user", JSON.stringify(json.merchant || json.user));
+
+      // also keep admin_api_key compatibility if your app uses that
+      if (json.apiKey) localStorage.setItem("admin_api_key", json.apiKey);
+
+      // best-effort navigate to owner dashboard
+      try {
+        navigate("/owner-dashboard");
+        // If navigate does nothing (e.g. blocked), force full page load as fallback
+        setTimeout(() => {
+          if (window.location.pathname !== "/owner-dashboard") window.location.href = "/owner-dashboard";
+        }, 250);
+      } catch (err) {
+        console.warn("navigate failed, forcing location:", err);
+        window.location.href = "/owner-dashboard";
+      }
     } catch (err) {
       console.error("Login exception", err);
       alert("Login failed: " + (err && err.message ? err.message : String(err)));
@@ -49,6 +64,16 @@ export default function MerchantLogin() {
       setLoading(false);
     }
   }
+
+  // optional: if user already logged in, redirect immediately
+  React.useEffect(() => {
+    const t = localStorage.getItem("auth_token");
+    if (t) {
+      // token exists — go to dashboard
+      try { navigate("/owner-dashboard"); } catch { window.location.href = "/owner-dashboard"; }
+    }
+    // eslint-disable-next-line
+  }, []);
 
   return (
     <div className="max-w-md mx-auto p-6 bg-white rounded shadow">
