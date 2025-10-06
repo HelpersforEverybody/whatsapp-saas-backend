@@ -1,4 +1,4 @@
-// src/pages/ShopManager.jsx
+// frontend/src/pages/ShopManager.jsx
 import React, { useState, useEffect } from "react";
 import EditItemModal from "../components/EditItemModal";
 import ConfirmDialog from "../components/ConfirmDialog";
@@ -18,6 +18,12 @@ export default function ShopManager() {
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [pendingDelete, setPendingDelete] = useState(null);
 
+  const [toast, setToast] = useState(null);
+  function showToast(msg, ms = 2500) {
+    setToast(msg);
+    setTimeout(() => setToast(null), ms);
+  }
+
   // load shops
   async function loadShops() {
     try {
@@ -26,6 +32,7 @@ export default function ShopManager() {
       setShops(await res.json());
     } catch (e) {
       console.error("Load shops error", e);
+      showToast("Failed to load shops");
     }
   }
 
@@ -42,7 +49,7 @@ export default function ShopManager() {
       setSelectedShop(shopId);
     } catch (e) {
       console.error("Load menu error", e);
-      alert("Failed to load menu");
+      showToast("Failed to load menu");
     } finally {
       setLoading(false);
     }
@@ -50,7 +57,7 @@ export default function ShopManager() {
 
   // open add item (with shop selected)
   function openAdd() {
-    if (!selectedShop) return alert("Select a shop first (View Menu).");
+    if (!selectedShop) return showToast("Select a shop first (View Menu).");
     setEditItem(null);
     setEditOpen(true);
   }
@@ -64,7 +71,10 @@ export default function ShopManager() {
   // after saved (add or edit)
   function onSavedItem(saved) {
     // refresh menu
-    if (selectedShop) loadMenu(selectedShop);
+    if (selectedShop) {
+      loadMenu(selectedShop);
+      showToast("Item saved");
+    }
   }
 
   // delete flow
@@ -74,7 +84,7 @@ export default function ShopManager() {
   }
 
   async function doDeleteConfirmed() {
-    if (!pendingDelete) return;
+    if (!pendingDelete || !selectedShop) return;
     const item = pendingDelete;
     setConfirmOpen(false);
     try {
@@ -84,63 +94,78 @@ export default function ShopManager() {
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       // refresh
-      loadMenu(selectedShop);
+      await loadMenu(selectedShop);
       setPendingDelete(null);
+      showToast("Item deleted");
     } catch (e) {
       console.error("Delete item error", e);
-      alert("Failed to delete item");
+      showToast("Failed to delete item");
     }
   }
 
   return (
-    <div style={{ maxWidth: 900, margin: "30px auto", padding: "0 16px" }}>
-      <h1>🛍 Shops & Menu Manager</h1>
+    <div className="max-w-5xl mx-auto p-4">
+      <div className="flex items-center justify-between mb-6">
+        <h1 className="text-2xl font-semibold">🛍 Shops & Menu Manager</h1>
+      </div>
 
-      <section style={{ marginTop: 16 }}>
-        <h3>Existing Shops</h3>
-        <div style={{ display: "grid", gap: 8 }}>
-          {shops.length === 0 ? <div>No shops yet</div> : shops.map(s => (
-            <div key={s._id} style={{ padding: 10, border: "1px solid #ddd", borderRadius: 8, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-              <div>
-                <b>{s.name}</b><div style={{ fontSize: 12, color: "#666" }}>{s.phone}</div>
+      <section className="mb-6">
+        <h3 className="text-lg font-medium mb-3">Existing Shops</h3>
+        <div className="space-y-3">
+          {shops.length === 0 ? (
+            <div className="text-sm text-gray-500">No shops yet</div>
+          ) : (
+            shops.map((s) => (
+              <div key={s._id} className="flex items-center justify-between p-3 bg-white rounded-lg shadow-sm border">
+                <div>
+                  <div className="font-semibold">{s.name}</div>
+                  <div className="text-sm text-gray-500">{s.phone}</div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => loadMenu(s._id)}
+                    className="px-3 py-1 rounded-md border bg-white text-gray-700 hover:bg-gray-50"
+                  >
+                    View Menu
+                  </button>
+                </div>
               </div>
-              <div>
-                <button onClick={() => loadMenu(s._id)} style={{ marginRight: 8, padding: "6px 10px" }}>View Menu</button>
-              </div>
-            </div>
-          ))}
+            ))
+          )}
         </div>
       </section>
 
-      {/* menu area */}
       {selectedShop && (
-        <section style={{ marginTop: 24 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            <h3>Menu for shop</h3>
-            <div>
-              <button onClick={() => { loadMenu(selectedShop); }} style={{ marginRight: 8 }}>Refresh</button>
-              <button onClick={openAdd} style={{ background: "#28a745", color: "white", padding: "8px 12px", borderRadius: 6 }}>Add item</button>
+        <section className="bg-white p-4 rounded-lg shadow-sm border">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-lg font-medium">Menu for shop</h3>
+            <div className="flex items-center gap-2">
+              <button onClick={() => loadMenu(selectedShop)} className="px-3 py-1 rounded-md bg-gray-100">Refresh</button>
+              <button onClick={openAdd} className="px-3 py-1 rounded-md bg-green-600 text-white">Add item</button>
             </div>
           </div>
 
-          <div style={{ marginTop: 12 }}>
-            {loading ? <div>Loading...</div> :
-              menu.length === 0 ? <div>No items yet</div> :
-              <div style={{ display: "grid", gap: 10 }}>
+          <div>
+            {loading ? (
+              <div className="text-sm text-gray-500">Loading...</div>
+            ) : menu.length === 0 ? (
+              <div className="text-sm text-gray-500">No items yet</div>
+            ) : (
+              <div className="space-y-3">
                 {menu.map(it => (
-                  <div key={it._id} style={{ border: "1px solid #eee", padding: 12, borderRadius: 8, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <div key={it._id} className="flex items-center justify-between p-3 rounded-md border bg-white">
                     <div>
-                      <div style={{ fontWeight: 600 }}>{it.name} <span style={{ fontSize: 12, color: "#666" }}>({it.externalId||"—"})</span></div>
-                      <div style={{ fontSize: 13, color: "#444" }}>₹{it.price} • {it.available ? "Available" : "Unavailable"}</div>
+                      <div className="font-semibold">{it.name} <span className="text-xs text-gray-400">({it.externalId || "—"})</span></div>
+                      <div className="text-sm text-gray-600">₹{it.price} • {it.available ? "Available" : "Unavailable"}</div>
                     </div>
-                    <div style={{ display: "flex", gap: 8 }}>
-                      <button onClick={() => openEdit(it)} style={{ padding: "6px 10px" }}>Edit</button>
-                      <button onClick={() => askDelete(it)} style={{ padding: "6px 10px", background: "#d9534f", color: "white", borderRadius: 6 }}>Delete</button>
+                    <div className="flex items-center gap-2">
+                      <button onClick={() => openEdit(it)} className="px-3 py-1 rounded-md border hover:bg-gray-50">Edit</button>
+                      <button onClick={() => askDelete(it)} className="px-3 py-1 rounded-md bg-red-600 text-white">Delete</button>
                     </div>
                   </div>
                 ))}
               </div>
-            }
+            )}
           </div>
         </section>
       )}
@@ -162,6 +187,12 @@ export default function ShopManager() {
         onCancel={() => setConfirmOpen(false)}
         onConfirm={doDeleteConfirmed}
       />
+
+      {toast && (
+        <div className="fixed right-4 bottom-4 bg-blue-600 text-white px-4 py-2 rounded-md shadow">
+          {toast}
+        </div>
+      )}
     </div>
   );
 }
