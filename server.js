@@ -455,6 +455,82 @@ app.post('/webhook/whatsapp', async (req, res) => {
   res.writeHead(200, { 'Content-Type': 'text/xml' });
   res.end(twiml.toString());
 });
+// --- Add this route to server.js for quick Socket.IO testing ---
+app.get('/socket-test', (req, res) => {
+  const html = `<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Socket.IO Test</title>
+    <style>
+      body { font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial; padding: 20px; }
+      input, button { padding: 8px; font-size: 14px; }
+      #log { margin-top: 12px; white-space: pre-wrap; border:1px solid #eee; padding:10px; height:260px; overflow:auto; background:#fafafa; }
+    </style>
+  </head>
+  <body>
+    <h2>Socket.IO Test</h2>
+    <div>
+      <label>Order ID: <input id="orderId" placeholder="paste order id here" style="width:320px" /></label>
+      <button id="joinBtn">Connect & Join</button>
+      <button id="disconnectBtn">Disconnect</button>
+    </div>
+
+    <div id="log">Logs will appear here...</div>
+
+    <script src="https://cdn.socket.io/4.7.1/socket.io.min.js"></script>
+    <script>
+      const logEl = document.getElementById('log');
+      function log(...args) { logEl.textContent += '\\n' + args.map(a => (typeof a === 'object' ? JSON.stringify(a) : a)).join(' '); logEl.scrollTop = logEl.scrollHeight; }
+
+      let socket = null;
+      document.getElementById('joinBtn').addEventListener('click', () => {
+        const orderId = document.getElementById('orderId').value.trim();
+        if (!orderId) return alert('enter order id');
+
+        if (socket && socket.connected) {
+          log('Already connected — joining room', orderId);
+          socket.emit('joinOrder', { orderId });
+          return;
+        }
+
+        // connect to same origin - omitted host will use current origin
+        socket = io(window.location.origin);
+
+        socket.on('connect', () => {
+          log('Connected, socket id:', socket.id);
+          socket.emit('joinOrder', { orderId });
+          log('Joined order room:', orderId);
+        });
+
+        socket.on('disconnect', (reason) => {
+          log('Disconnected:', reason);
+        });
+
+        socket.on('orderStatusUpdate', (data) => {
+          log('orderStatusUpdate ->', data);
+        });
+
+        socket.on('restaurantOrderUpdate', (data) => {
+          log('restaurantOrderUpdate ->', data);
+        });
+
+        log('Connecting...');
+      });
+
+      document.getElementById('disconnectBtn').addEventListener('click', () => {
+        if (socket) {
+          socket.disconnect();
+          log('Manual disconnect called.');
+          socket = null;
+        }
+      });
+    </script>
+  </body>
+</html>`;
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.send(html);
+});
 
 /* ----------------- Start server ----------------- */
 server.listen(PORT, () => console.log(`Server running with Socket.io on port ${PORT}`));
