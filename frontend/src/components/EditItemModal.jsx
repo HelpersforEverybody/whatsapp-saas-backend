@@ -1,14 +1,14 @@
-// src/components/EditItemModal.jsx
+// frontend/src/components/EditItemModal.jsx
 import React, { useState, useEffect } from "react";
 
 /**
  * Props:
  *  - open: boolean
  *  - onClose: fn()
- *  - onSaved: fn(item) -> called when saved
- *  - shopId: string (required for create)
- *  - item: object|null (if editing)
- *  - apiBase, apiKey (strings)
+ *  - onSaved: fn(item)
+ *  - shopId: string
+ *  - item: object|null
+ *  - apiBase, apiKey
  */
 export default function EditItemModal({ open, onClose, onSaved, shopId, item, apiBase, apiKey }) {
   const [name, setName] = useState("");
@@ -62,30 +62,37 @@ export default function EditItemModal({ open, onClose, onSaved, shopId, item, ap
   }
 
   return (
-    <div style={{
-      position: "fixed", left: 0, top: 0, right: 0, bottom: 0,
-      background: "rgba(0,0,0,0.35)", display: "flex",
-      alignItems: "center", justifyContent: "center", zIndex: 99999
-    }}>
-      <div style={{ width: 520, background: "#fff", padding: 18, borderRadius: 8 }}>
-        <h3 style={{ marginTop: 0 }}>{item ? "Edit item" : "Add item"}</h3>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+      <div className="w-full max-w-2xl bg-white rounded-lg shadow-lg p-6">
+        <h3 className="text-lg font-semibold mb-3">{item ? "Edit item" : "Add item"}</h3>
 
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 120px", gap: 8, marginTop: 10 }}>
-          <input placeholder="Item name" value={name} onChange={(e)=>setName(e.target.value)} style={{ padding: 8, borderRadius: 6, border: "1px solid #ddd" }} />
-          <input placeholder="Price" type="number" value={price} onChange={(e)=>setPrice(e.target.value)} style={{ padding: 8, borderRadius: 6, border: "1px solid #ddd" }} />
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <input
+            className="col-span-2 px-3 py-2 border rounded-md"
+            placeholder="Item name"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+          />
+          <input
+            className="px-3 py-2 border rounded-md"
+            placeholder="Price"
+            type="number"
+            value={price}
+            onChange={(e) => setPrice(e.target.value)}
+          />
         </div>
 
-        <div style={{ marginTop: 10 }}>
-          <label style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
-            <input type="checkbox" checked={available} onChange={e=>setAvailable(e.target.checked)} />
-            Available
+        <div className="mt-3">
+          <label className="inline-flex items-center gap-2">
+            <input type="checkbox" checked={available} onChange={(e) => setAvailable(e.target.checked)} className="h-4 w-4" />
+            <span className="text-sm">Available</span>
           </label>
         </div>
 
-        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 14 }}>
-          <button onClick={onClose} style={{ padding: "8px 12px", background: "#eee", borderRadius: 6 }}>Cancel</button>
-          <button onClick={save} disabled={saving} style={{ padding: "8px 12px", background: "#28a745", color: "white", borderRadius: 6 }}>
-            {saving ? "Saving..." : (item ? "Update" : "Add")}
+        <div className="flex justify-end gap-2 mt-4">
+          <button onClick={onClose} className="px-4 py-2 rounded-md bg-gray-100">Cancel</button>
+          <button onClick={save} disabled={saving} className="px-4 py-2 rounded-md bg-green-600 text-white">
+            {saving ? "Saving..." : item ? "Update" : "Add"}
           </button>
         </div>
       </div>
