@@ -1,13 +1,15 @@
-// server.js — backend with Shop/Menu + WhatsApp + Socket.io + JWT admin login
+// server.js — Full backend with Shop/Menu + WhatsApp + Socket.io + JWT (admin + merchant) + owner-protected endpoints
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const mongoose = require('mongoose');
-const app = express();
 const http = require('http');
+const jwt = require('jsonwebtoken');
+const bcrypt = require('bcryptjs');
+
+const app = express();
 const server = http.createServer(app);
 const { Server } = require('socket.io');
-const jwt = require('jsonwebtoken');
 
 const io = new Server(server, {
   cors: {
@@ -15,6 +17,7 @@ const io = new Server(server, {
     methods: ['GET', 'POST', 'PATCH', 'PUT', 'DELETE']
   }
 });
+
 const PORT = process.env.PORT || 3000;
 
 /* ----------------- middleware ----------------- */
@@ -22,7 +25,7 @@ app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
 
-// ---------------- SOCKET.IO SETUP ----------------
+/* ----------------- Socket.IO ----------------- */
 io.on('connection', (socket) => {
   console.log('Client connected:', socket.id);
 
@@ -37,17 +40,15 @@ io.on('connection', (socket) => {
   });
 });
 
-// Helper to emit status updates
 function emitOrderUpdate(orderId, payload) {
   io.to(`order:${orderId}`).emit('orderStatusUpdate', payload);
 }
 
-/* ----------------- Auth helpers ----------------- */
+/* ----------------- Auth & env helpers ----------------- */
 const API_KEY_ENV = (process.env.API_KEY || '').toString().trim();
 const JWT_SECRET = (process.env.JWT_SECRET || '').toString().trim();
 const ADMIN_PASSWORD = (process.env.ADMIN_PASSWORD || '').toString().trim();
 
-// verify JWT and return decoded or null
 function verifyJwtToken(authHeader) {
   if (!authHeader) return null;
   const parts = authHeader.split(/\s+/);
@@ -61,24 +62,22 @@ function verifyJwtToken(authHeader) {
   }
 }
 
-// middleware: allow either x-api-key equal to API_KEY or a valid Bearer JWT
+// allow either admin API_KEY OR valid Bearer JWT (admin or merchant)
 const requireApiKeyOrJwt = (req, res, next) => {
   const key = (req.get('x-api-key') || req.query.api_key || '').toString().trim();
   if (!API_KEY_ENV) {
     return res.status(500).json({ error: 'server misconfigured: API_KEY missing' });
   }
 
-  // header Authorization: Bearer <token>
   const authHeader = (req.get('authorization') || '').toString().trim();
   if (authHeader) {
     const decoded = verifyJwtToken(authHeader);
-    if (decoded && decoded.role === 'admin') {
-      req.admin = decoded; // attach admin info if needed
+    if (decoded && (decoded.role === 'admin' || decoded.role === 'merchant')) {
+      req.auth = decoded;
       return next();
     }
   }
 
-  // fallback to x-api-key
   if (key && key === API_KEY_ENV) return next();
 
   return res.status(401).json({ error: 'unauthorized' });
@@ -94,11 +93,25 @@ mongoose
   .catch((err) => console.error('❌ MongoDB connection error:', err));
 
 /* ----------------- Models ----------------- */
-// Shop
+
+// User (merchant)
+const userSchema = new mongoose.Schema({
+  name: { type: String, required: true },
+  email: { type: String, required: true, unique: true, lowercase: true },
+  passwordHash: { type: String, required: true },
+  createdAt: { type: Date, default: Date.now }
+});
+userSchema.methods.verifyPassword = function (plain) {
+  return bcrypt.compareSync(String(plain), this.passwordHash);
+};
+const User = mongoose.model('User', userSchema);
+
+// Shop (owner optional)
 const shopSchema = new mongoose.Schema({
   name: { type: String, required: true },
   phone: { type: String, required: true, unique: true },
   description: String,
+  owner: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
   createdAt: { type: Date, default: Date.now },
 });
 const Shop = mongoose.model('Shop', shopSchema);
@@ -127,7 +140,7 @@ const orderSchema = new mongoose.Schema({
     },
   ],
   total: { type: Number, default: 0 },
-  status: { type: String, default: 'received' },
+  status: { type: String, default: 'received' }, // received, accepted, packed, out-for-delivery, delivered
   createdAt: { type: Date, default: Date.now },
 });
 const Order = mongoose.model('Order', orderSchema);
@@ -162,9 +175,34 @@ async function sendWhatsAppMessageSafe(toPhone, text) {
   }
 }
 
+/* ----------------- Owner middleware (merchant) ----------------- */
+// requireOwner: validates merchant JWT and ensures ownership when shopId provided
+const requireOwner = async (req, res, next) => {
+  const authHeader = (req.get('authorization') || '').toString().trim();
+  const decoded = verifyJwtToken(authHeader);
+  if (!decoded || decoded.role !== 'merchant') {
+    return res.status(401).json({ error: 'unauthorized' });
+  }
+  req.merchantId = decoded.userId;
+
+  const shopId = req.params.shopId || req.body.shopId || req.body.shop;
+  if (shopId) {
+    try {
+      const shop = await Shop.findById(shopId).lean();
+      if (!shop) return res.status(404).json({ error: 'shop not found' });
+      if (!shop.owner || String(shop.owner) !== String(req.merchantId)) {
+        return res.status(403).json({ error: 'forbidden: not owner of shop' });
+      }
+    } catch (e) {
+      return res.status(400).json({ error: 'invalid shop id' });
+    }
+  }
+  next();
+};
+
 /* ----------------- Auth endpoints ----------------- */
 
-/* Admin login -> returns JWT (use ADMIN_PASSWORD) */
+// Admin login (existing admin password method)
 app.post('/auth/login', (req, res) => {
   try {
     const { password } = req.body || {};
@@ -173,7 +211,6 @@ app.post('/auth/login', (req, res) => {
     if (!password || password !== ADMIN_PASSWORD) {
       return res.status(401).json({ error: 'invalid credentials' });
     }
-    // sign JWT (role: admin). Keep reasonable TTL (e.g., 12 hours)
     const token = jwt.sign({ role: 'admin', issuedAt: Date.now() }, JWT_SECRET, { expiresIn: '12h' });
     return res.json({ token, expiresIn: 12 * 3600 });
   } catch (e) {
@@ -182,17 +219,56 @@ app.post('/auth/login', (req, res) => {
   }
 });
 
-/* ----------------- Routes (protected where required) ----------------- */
+// Merchant signup
+app.post('/auth/signup', async (req, res) => {
+  try {
+    const { name, email, password, createShop } = req.body || {};
+    if (!name || !email || !password) return res.status(400).json({ error: 'name,email,password required' });
+    const existing = await User.findOne({ email: email.toLowerCase() });
+    if (existing) return res.status(409).json({ error: 'email already registered' });
+    const saltRounds = Number(process.env.SALT_ROUNDS || 10);
+    const hash = bcrypt.hashSync(String(password), saltRounds);
+    const user = await User.create({ name, email: email.toLowerCase(), passwordHash: hash });
+    let shop = null;
+    if (createShop && createShop.name && createShop.phone) {
+      shop = await Shop.create({ name: createShop.name, phone: createShop.phone, description: createShop.description || '', owner: user._id });
+    }
+    return res.status(201).json({ userId: user._id, shopId: shop ? shop._id : null });
+  } catch (e) {
+    console.error('Signup error', e);
+    return res.status(500).json({ error: 'server error' });
+  }
+});
+
+// Merchant login
+app.post('/auth/merchant-login', async (req, res) => {
+  try {
+    const { email, password } = req.body || {};
+    if (!email || !password) return res.status(400).json({ error: 'email and password required' });
+    const user = await User.findOne({ email: email.toLowerCase() });
+    if (!user) return res.status(401).json({ error: 'invalid credentials' });
+    const ok = user.verifyPassword(password);
+    if (!ok) return res.status(401).json({ error: 'invalid credentials' });
+    if (!JWT_SECRET) return res.status(500).json({ error: 'server misconfigured: JWT_SECRET missing' });
+    const token = jwt.sign({ role: 'merchant', userId: String(user._id) }, JWT_SECRET, { expiresIn: '12h' });
+    return res.json({ token, userId: user._id });
+  } catch (e) {
+    console.error('Merchant login error', e);
+    return res.status(500).json({ error: 'server error' });
+  }
+});
+
+/* ----------------- Routes ----------------- */
 
 /* Health check */
 app.get('/status', (req, res) => res.json({ status: 'ok', time: new Date() }));
 
-/* Create Shop (merchant) */
-app.post('/api/shops', requireApiKeyOrJwt, async (req, res) => {
+/* Create Shop (owner creates) */
+app.post('/api/shops', requireOwner, async (req, res) => {
   try {
     const { name, phone, description } = req.body;
     if (!name || !phone) return res.status(400).json({ error: 'name and phone required' });
-    const shop = await Shop.create({ name, phone, description });
+    const shop = await Shop.create({ name, phone, description, owner: req.merchantId });
     res.status(201).json(shop);
   } catch (err) {
     console.error('Create shop error:', err);
@@ -200,8 +276,8 @@ app.post('/api/shops', requireApiKeyOrJwt, async (req, res) => {
   }
 });
 
-/* Add Menu Item (merchant) */
-app.post('/api/shops/:shopId/items', requireApiKeyOrJwt, async (req, res) => {
+/* Add Menu Item (owner only) */
+app.post('/api/shops/:shopId/items', requireOwner, async (req, res) => {
   try {
     const { name, price } = req.body;
     if (!name) return res.status(400).json({ error: 'name required' });
@@ -214,8 +290,8 @@ app.post('/api/shops/:shopId/items', requireApiKeyOrJwt, async (req, res) => {
   }
 });
 
-/* Edit menu item (merchant) */
-app.patch('/api/shops/:shopId/items/:itemId', requireApiKeyOrJwt, async (req, res) => {
+/* Edit menu item (owner only) */
+app.patch('/api/shops/:shopId/items/:itemId', requireOwner, async (req, res) => {
   try {
     const update = req.body;
     const item = await MenuItem.findOneAndUpdate({ _id: req.params.itemId, shop: req.params.shopId }, update, { new: true });
@@ -263,7 +339,7 @@ app.post('/api/orders', requireApiKeyOrJwt, async (req, res) => {
   }
 });
 
-/* List orders (merchant) */
+/* List orders (merchant/admin) */
 app.get('/api/orders', requireApiKeyOrJwt, async (req, res) => {
   try {
     const { shopId } = req.query;
@@ -287,8 +363,8 @@ app.get('/api/orders/:id', async (req, res) => {
   }
 });
 
-/* Merchant: list shop orders */
-app.get('/api/shops/:shopId/orders', requireApiKeyOrJwt, async (req, res) => {
+/* Merchant: list shop orders (owner only) */
+app.get('/api/shops/:shopId/orders', requireOwner, async (req, res) => {
   try {
     const orders = await Order.find({ shop: req.params.shopId }).sort({ createdAt: -1 }).limit(200);
     res.json(orders);
@@ -298,7 +374,7 @@ app.get('/api/shops/:shopId/orders', requireApiKeyOrJwt, async (req, res) => {
   }
 });
 
-/* Update order status (merchant) */
+/* Update order status (merchant/admin) */
 app.patch('/api/orders/:id/status', requireApiKeyOrJwt, async (req, res) => {
   try {
     const { status } = req.body;
@@ -309,13 +385,12 @@ app.patch('/api/orders/:id/status', requireApiKeyOrJwt, async (req, res) => {
 
     sendWhatsAppMessageSafe(order.phone, `Order ${order._id} status updated: ${status}`).catch(() => {});
 
-    // Emit Socket.io update
     try {
       const payload = {
         orderId: order._id.toString(),
         status,
         at: new Date().toISOString(),
-        meta: { note: 'updated via merchant dashboard', shop: order.shop ? order.shop.toString() : null }
+        meta: { note: 'updated via merchant/dashboard', shop: order.shop ? order.shop.toString() : null }
       };
       emitOrderUpdate(order._id.toString(), payload);
       console.log('Emitted orderStatusUpdate for', order._id.toString(), payload);
@@ -330,7 +405,7 @@ app.patch('/api/orders/:id/status', requireApiKeyOrJwt, async (req, res) => {
   }
 });
 
-/* ----------------- Twilio webhook for WhatsApp (public) ----------------- */
+/* ----------------- Twilio webhook for WhatsApp ----------------- */
 /* Supports: menu, order, status */
 app.post('/webhook/whatsapp', async (req, res) => {
   const from = (req.body.From || req.body.from || '').toString();
