@@ -3,7 +3,6 @@ import React, { useEffect, useState, useCallback } from 'react';
 import { useSocket } from '../hooks/useSocket';
 import OrderCard from '../components/OrderCard';
 
-// API_BASE and API_KEY (build-time or runtime)
 const API_BASE = (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_API_BASE)
   ? import.meta.env.VITE_API_BASE
   : (window.__API_BASE || 'https://whatsapp-saas-backend-f9ot.onrender.com');
@@ -20,10 +19,8 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
 
-  // runtime key fallback (for testing). You can set localStorage 'admin_api_key'.
   const API_KEY = BUILD_TIME_API_KEY || localStorage.getItem('admin_api_key') || '';
 
-  // load orders from backend
   const loadOrders = useCallback(async () => {
     setLoading(true);
     setError(null);
@@ -37,6 +34,7 @@ export default function Dashboard() {
       }
       const data = await res.json();
       setOrders(data);
+      window.lastOrders = data;
     } catch (e) {
       console.error('Load orders error', e);
       setError(e.message || String(e));
@@ -48,16 +46,12 @@ export default function Dashboard() {
 
   useEffect(() => { loadOrders(); }, [loadOrders]);
 
-  // handle realtime updates
+  // socket listener
   useEffect(() => {
     const cleanup = on('orderStatusUpdate', (payload) => {
-      // payload: { orderId, status, at, meta }
       setOrders(prev => {
         const idx = prev.findIndex(o => String(o._id) === String(payload.orderId));
-        if (idx === -1) {
-          // Optionally fetch single order here if needed
-          return prev;
-        }
+        if (idx === -1) return prev;
         const next = [...prev];
         next[idx] = { ...next[idx], status: payload.status };
         return next;
@@ -73,7 +67,6 @@ export default function Dashboard() {
     }
   };
 
-  // PATCH order status (optimistic)
   const updateOrderStatus = useCallback(async (orderId, newStatus) => {
     // optimistic update
     setOrders(prev => prev.map(o => (String(o._id) === String(orderId) ? { ...o, status: newStatus } : o)));
@@ -92,11 +85,9 @@ export default function Dashboard() {
         throw new Error(`HTTP ${res.status} ${t}`);
       }
       const updated = await res.json();
-      // apply authoritative server state
       setOrders(prev => prev.map(o => (String(o._id) === String(orderId) ? updated : o)));
     } catch (err) {
       console.error('Failed to update status', err);
-      // rollback: re-fetch orders to sync state
       await loadOrders();
       alert('Failed to update order status: ' + (err.message || err));
     }
