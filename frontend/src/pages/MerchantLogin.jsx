@@ -13,7 +13,7 @@ export default function MerchantLogin() {
     e && e.preventDefault();
     setLoading(true);
     try {
-      const res = await fetch(`${API_BASE}/auth/merchant-login`, {
+      const res = await fetch(`${API_BASE}/auth/login`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email: form.email, password: form.password })
