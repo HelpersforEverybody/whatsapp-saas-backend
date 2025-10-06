@@ -2,26 +2,27 @@
 import React, { useEffect, useState, useCallback } from "react";
 import { useSocket } from "../hooks/useSocket";
 
-// API base & key
 const API_BASE =
   import.meta.env.VITE_API_BASE || "https://whatsapp-saas-backend-f9ot.onrender.com";
 const API_KEY =
-  import.meta.env.VITE_API_KEY || "S3cR3t-1234-DoNotShare"; // fallback for now
+  import.meta.env.VITE_API_KEY || "S3cR3t-1234-DoNotShare";
 
 export default function Dashboard() {
   const { connected, joinOrder, on } = useSocket({ url: API_BASE });
   const [orders, setOrders] = useState([]);
+  const [loadingMap, setLoadingMap] = useState({}); // track per-order loading
+  const [successMap, setSuccessMap] = useState({}); // track per-order success
+  const [errorMap, setErrorMap] = useState({}); // track per-order errors
 
-  // Fetch recent orders
   const loadOrders = useCallback(async () => {
     try {
       const res = await fetch(`${API_BASE}/api/orders`, {
         headers: { "x-api-key": API_KEY },
       });
-      if (!res.ok) throw new Error("failed");
+      if (!res.ok) throw new Error("Failed to fetch");
       const data = await res.json();
       setOrders(data);
-      window.lastOrders = data; // helper for console use
+      window.lastOrders = data;
     } catch (e) {
       console.error("Load orders error", e);
     }
@@ -31,7 +32,6 @@ export default function Dashboard() {
     loadOrders();
   }, [loadOrders]);
 
-  // Listen for socket updates
   useEffect(() => {
     const cleanup = on("orderStatusUpdate", (payload) => {
       setOrders((prev) =>
@@ -45,8 +45,11 @@ export default function Dashboard() {
     return cleanup;
   }, [on]);
 
-  // PATCH order status
   const updateStatus = async (orderId, newStatus) => {
+    setLoadingMap((prev) => ({ ...prev, [orderId]: true }));
+    setErrorMap((prev) => ({ ...prev, [orderId]: false }));
+    setSuccessMap((prev) => ({ ...prev, [orderId]: false }));
+
     try {
       const res = await fetch(`${API_BASE}/api/orders/${orderId}/status`, {
         method: "PATCH",
@@ -56,25 +59,42 @@ export default function Dashboard() {
         },
         body: JSON.stringify({ status: newStatus }),
       });
-      if (res.ok) {
-        const updated = await res.json();
-        setOrders((prev) =>
-          prev.map((o) =>
-            o._id === updated._id ? { ...o, status: updated.status } : o
-          )
-        );
-        console.log("✅ Status updated:", updated._id, updated.status);
-      } else {
-        console.warn("❌ Failed to update:", res.status);
-      }
+
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const updated = await res.json();
+
+      setOrders((prev) =>
+        prev.map((o) =>
+          o._id === updated._id ? { ...o, status: updated.status } : o
+        )
+      );
+
+      // show success ✅ for 2 sec
+      setSuccessMap((prev) => ({ ...prev, [orderId]: true }));
+      setTimeout(() => {
+        setSuccessMap((prev) => ({ ...prev, [orderId]: false }));
+      }, 2000);
     } catch (e) {
       console.error("PATCH error", e);
+      setErrorMap((prev) => ({ ...prev, [orderId]: true }));
+      setTimeout(() => {
+        setErrorMap((prev) => ({ ...prev, [orderId]: false }));
+      }, 2000);
+    } finally {
+      setLoadingMap((prev) => ({ ...prev, [orderId]: false }));
     }
   };
 
   return (
     <div style={{ maxWidth: 960, margin: "30px auto", padding: "0 16px" }}>
-      <header style={{ display: "flex", justifyContent: "space-between" }}>
+      <header
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          marginBottom: 20,
+        }}
+      >
         <h1>Merchant Dashboard</h1>
         <div>
           {connected ? (
@@ -91,61 +111,88 @@ export default function Dashboard() {
           padding: "8px 14px",
           borderRadius: 8,
           background: "#eee",
-          marginTop: 20,
+          marginBottom: 20,
         }}
       >
-        Refresh Orders
+        🔄 Refresh Orders
       </button>
 
-      <section style={{ marginTop: 20 }}>
+      <section>
         {orders.length === 0 ? (
           <div>No orders found</div>
         ) : (
-          orders.map((order) => (
-            <div
-              key={order._id}
-              data-order-id={order._id}
-              style={{
-                background: "#fff",
-                marginBottom: 14,
-                padding: 16,
-                borderRadius: 10,
-                boxShadow: "0 4px 10px rgba(0,0,0,0.05)",
-              }}
-            >
-              <b>{order.customerName}</b> — {order.phone}
-              <div>
-                Status:{" "}
-                <b className="order-status" style={{ color: "#0070f3" }}>
-                  {order.status}
-                </b>
-              </div>
-              <div>Items: {order.items.map((i) => i.name).join(", ")}</div>
-              <div>Total: ₹{order.total}</div>
+          orders.map((order) => {
+            const isLoading = loadingMap[order._id];
+            const isSuccess = successMap[order._id];
+            const isError = errorMap[order._id];
 
-              <div style={{ marginTop: 10, display: "flex", gap: 8 }}>
-                {["accepted", "packed", "out-for-delivery", "delivered"].map(
-                  (st) => (
-                    <button
-                      key={st}
-                      onClick={() => updateStatus(order._id, st)}
-                      style={{
-                        background: "#007bff",
-                        color: "white",
-                        padding: "6px 10px",
-                        borderRadius: 6,
-                        border: "none",
-                        cursor: "pointer",
-                        fontSize: 13,
-                      }}
-                    >
-                      {st}
-                    </button>
-                  )
-                )}
+            return (
+              <div
+                key={order._id}
+                data-order-id={order._id}
+                style={{
+                  background: "#fff",
+                  marginBottom: 14,
+                  padding: 16,
+                  borderRadius: 10,
+                  boxShadow: "0 4px 10px rgba(0,0,0,0.05)",
+                  position: "relative",
+                }}
+              >
+                <b>{order.customerName}</b> — {order.phone}
+                <div>
+                  Status:{" "}
+                  <b
+                    className="order-status"
+                    style={{
+                      color: isError
+                        ? "crimson"
+                        : isSuccess
+                        ? "green"
+                        : "#0070f3",
+                    }}
+                  >
+                    {isLoading
+                      ? "⏳ Updating..."
+                      : isSuccess
+                      ? "✅ " + order.status
+                      : isError
+                      ? "⚠️ Failed"
+                      : order.status}
+                  </b>
+                </div>
+                <div>Items: {order.items.map((i) => i.name).join(", ")}</div>
+                <div>Total: ₹{order.total}</div>
+
+                <div style={{ marginTop: 10, display: "flex", gap: 8 }}>
+                  {["accepted", "packed", "out-for-delivery", "delivered"].map(
+                    (st) => (
+                      <button
+                        key={st}
+                        onClick={() => updateStatus(order._id, st)}
+                        disabled={isLoading}
+                        style={{
+                          background: isLoading
+                            ? "#aaa"
+                            : "#007bff",
+                          color: "white",
+                          padding: "6px 10px",
+                          borderRadius: 6,
+                          border: "none",
+                          cursor: isLoading ? "not-allowed" : "pointer",
+                          fontSize: 13,
+                          opacity: isLoading ? 0.7 : 1,
+                          transition: "all 0.2s ease",
+                        }}
+                      >
+                        {isLoading ? "..." : st}
+                      </button>
+                    )
+                  )}
+                </div>
               </div>
-            </div>
-          ))
+            );
+          })
         )}
       </section>
     </div>
