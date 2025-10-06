@@ -1,4 +1,3 @@
-// src/pages/Dashboard.jsx
 import React, { useEffect, useState, useCallback } from "react";
 import { useSocket } from "../hooks/useSocket";
 
@@ -8,12 +7,12 @@ const API_KEY =
   import.meta.env.VITE_API_KEY || "S3cR3t-1234-DoNotShare";
 
 export default function Dashboard() {
-  const { connected, joinOrder, on } = useSocket({ url: API_BASE });
+  const { connected, on } = useSocket({ url: API_BASE });
   const [orders, setOrders] = useState([]);
-  const [loadingMap, setLoadingMap] = useState({}); // track per-order loading
-  const [successMap, setSuccessMap] = useState({}); // track per-order success
-  const [errorMap, setErrorMap] = useState({}); // track per-order errors
+  const [loadingMap, setLoadingMap] = useState({});
+  const [errorMap, setErrorMap] = useState({});
 
+  // Load orders
   const loadOrders = useCallback(async () => {
     try {
       const res = await fetch(`${API_BASE}/api/orders`, {
@@ -32,6 +31,7 @@ export default function Dashboard() {
     loadOrders();
   }, [loadOrders]);
 
+  // Listen for socket updates
   useEffect(() => {
     const cleanup = on("orderStatusUpdate", (payload) => {
       setOrders((prev) =>
@@ -45,10 +45,10 @@ export default function Dashboard() {
     return cleanup;
   }, [on]);
 
+  // Update order status
   const updateStatus = async (orderId, newStatus) => {
     setLoadingMap((prev) => ({ ...prev, [orderId]: true }));
     setErrorMap((prev) => ({ ...prev, [orderId]: false }));
-    setSuccessMap((prev) => ({ ...prev, [orderId]: false }));
 
     try {
       const res = await fetch(`${API_BASE}/api/orders/${orderId}/status`, {
@@ -68,12 +68,6 @@ export default function Dashboard() {
           o._id === updated._id ? { ...o, status: updated.status } : o
         )
       );
-
-      // show success ✅ for 2 sec
-      setSuccessMap((prev) => ({ ...prev, [orderId]: true }));
-      setTimeout(() => {
-        setSuccessMap((prev) => ({ ...prev, [orderId]: false }));
-      }, 2000);
     } catch (e) {
       console.error("PATCH error", e);
       setErrorMap((prev) => ({ ...prev, [orderId]: true }));
@@ -83,6 +77,91 @@ export default function Dashboard() {
     } finally {
       setLoadingMap((prev) => ({ ...prev, [orderId]: false }));
     }
+  };
+
+  // Order UI
+  const renderOrder = (order) => {
+    const isLoading = loadingMap[order._id];
+    const isError = errorMap[order._id];
+    const currentStatus = order.status;
+
+    const statusColors = {
+      received: "#777",
+      accepted: "green",
+      packed: "#0066cc",
+      "out-for-delivery": "#ff8800",
+      delivered: "#222",
+    };
+
+    const statusSteps = [
+      "accepted",
+      "packed",
+      "out-for-delivery",
+      "delivered",
+    ];
+
+    return (
+      <div
+        key={order._id}
+        data-order-id={order._id}
+        style={{
+          background: "#fff",
+          marginBottom: 14,
+          padding: 16,
+          borderRadius: 10,
+          boxShadow: "0 4px 10px rgba(0,0,0,0.05)",
+        }}
+      >
+        <b>{order.customerName}</b> — {order.phone}
+        <div>
+          Status:{" "}
+          <b
+            className="order-status"
+            style={{
+              color: isError ? "crimson" : statusColors[currentStatus] || "#0070f3",
+            }}
+          >
+            {isLoading ? "⏳ Updating..." : isError ? "⚠️ Failed" : currentStatus}
+          </b>
+        </div>
+        <div>Items: {order.items.map((i) => i.name).join(", ")}</div>
+        <div>Total: ₹{order.total}</div>
+
+        <div style={{ marginTop: 10, display: "flex", gap: 8 }}>
+          {statusSteps.map((st) => {
+            const isActive = st === currentStatus;
+            const isDisabled =
+              isLoading ||
+              statusSteps.indexOf(st) < statusSteps.indexOf(currentStatus);
+
+            return (
+              <button
+                key={st}
+                onClick={() => updateStatus(order._id, st)}
+                disabled={isDisabled}
+                style={{
+                  background: isActive
+                    ? "green"
+                    : isDisabled
+                    ? "#ccc"
+                    : "#007bff",
+                  color: "white",
+                  padding: "6px 10px",
+                  borderRadius: 6,
+                  border: "none",
+                  cursor: isDisabled ? "not-allowed" : "pointer",
+                  fontSize: 13,
+                  transition: "all 0.2s ease",
+                  opacity: isLoading ? 0.6 : 1,
+                }}
+              >
+                {isActive ? `✅ ${st}` : isLoading ? "..." : st}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+    );
   };
 
   return (
@@ -121,78 +200,7 @@ export default function Dashboard() {
         {orders.length === 0 ? (
           <div>No orders found</div>
         ) : (
-          orders.map((order) => {
-            const isLoading = loadingMap[order._id];
-            const isSuccess = successMap[order._id];
-            const isError = errorMap[order._id];
-
-            return (
-              <div
-                key={order._id}
-                data-order-id={order._id}
-                style={{
-                  background: "#fff",
-                  marginBottom: 14,
-                  padding: 16,
-                  borderRadius: 10,
-                  boxShadow: "0 4px 10px rgba(0,0,0,0.05)",
-                  position: "relative",
-                }}
-              >
-                <b>{order.customerName}</b> — {order.phone}
-                <div>
-                  Status:{" "}
-                  <b
-                    className="order-status"
-                    style={{
-                      color: isError
-                        ? "crimson"
-                        : isSuccess
-                        ? "green"
-                        : "#0070f3",
-                    }}
-                  >
-                    {isLoading
-                      ? "⏳ Updating..."
-                      : isSuccess
-                      ? "✅ " + order.status
-                      : isError
-                      ? "⚠️ Failed"
-                      : order.status}
-                  </b>
-                </div>
-                <div>Items: {order.items.map((i) => i.name).join(", ")}</div>
-                <div>Total: ₹{order.total}</div>
-
-                <div style={{ marginTop: 10, display: "flex", gap: 8 }}>
-                  {["accepted", "packed", "out-for-delivery", "delivered"].map(
-                    (st) => (
-                      <button
-                        key={st}
-                        onClick={() => updateStatus(order._id, st)}
-                        disabled={isLoading}
-                        style={{
-                          background: isLoading
-                            ? "#aaa"
-                            : "#007bff",
-                          color: "white",
-                          padding: "6px 10px",
-                          borderRadius: 6,
-                          border: "none",
-                          cursor: isLoading ? "not-allowed" : "pointer",
-                          fontSize: 13,
-                          opacity: isLoading ? 0.7 : 1,
-                          transition: "all 0.2s ease",
-                        }}
-                      >
-                        {isLoading ? "..." : st}
-                      </button>
-                    )
-                  )}
-                </div>
-              </div>
-            );
-          })
+          orders.map(renderOrder)
         )}
       </section>
     </div>
