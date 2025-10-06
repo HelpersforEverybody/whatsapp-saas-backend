@@ -1,259 +1,199 @@
-// frontend/src/pages/Dashboard.jsx
-import React, { useEffect, useState, useCallback } from "react";
-import { useSocket } from "../hooks/useSocket";
+// frontend/src/pages/OwnerDashboard.jsx
+import React, { useEffect, useState } from "react";
+import { apiFetch, getApiBase } from "../hooks/useApi";
 import { useNavigate } from "react-router-dom";
 
-const API_BASE = import.meta.env.VITE_API_BASE || "https://whatsapp-saas-backend-f9ot.onrender.com";
-
-export default function Dashboard() {
-  const { connected, on } = useSocket({ url: API_BASE });
+export default function OwnerDashboard() {
+  const API_BASE = getApiBase();
   const navigate = useNavigate();
-  const [orders, setOrders] = useState([]);
   const [shops, setShops] = useState([]);
-  const [loadingOrders, setLoadingOrders] = useState(false);
-  const [token, setToken] = useState(localStorage.getItem("admin_token") || "");
-  const [password, setPassword] = useState("");
+  const [selectedShop, setSelectedShop] = useState(null);
+  const [orders, setOrders] = useState([]);
+  const [menuItems, setMenuItems] = useState([]);
+  const [newItem, setNewItem] = useState({ name: "", price: 0 });
+  const [loading, setLoading] = useState(false);
 
-  // LOGIN
-  const doLogin = async (e) => {
-    e.preventDefault();
+  function logout() {
+    localStorage.removeItem("merchant_token");
+    navigate("/merchant-login");
+  }
+
+  async function loadShops() {
+    setLoading(true);
     try {
-      const res = await fetch(`${API_BASE}/auth/login`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ password }),
-      });
-      if (!res.ok) throw new Error("Login failed");
-      const data = await res.json();
-      localStorage.setItem("admin_token", data.token);
-      setToken(data.token);
-      setPassword("");
-      alert("✅ Logged in successfully");
-      loadOrders();
-      loadShops();
-    } catch (err) {
-      console.error("Login error", err);
-      alert("Invalid password or server error");
-    }
-  };
-
-  const doLogout = () => {
-    localStorage.removeItem("admin_token");
-    setToken("");
-    setOrders([]);
-    setShops([]);
-  };
-
-  // FETCH HELPERS
-  const apiFetch = async (path, opts = {}) => {
-    const headers = opts.headers || {};
-    if (token) headers["Authorization"] = `Bearer ${token}`;
-    opts.headers = headers;
-    const res = await fetch(`${API_BASE}${path}`, opts);
-    if (res.status === 401) {
-      alert("Session expired. Please log in again.");
-      doLogout();
-      throw new Error("Unauthorized");
-    }
-    return res;
-  };
-
-  // LOAD ORDERS
-  const loadOrders = useCallback(async () => {
-    setLoadingOrders(true);
-    try {
-      const res = await apiFetch("/api/orders");
-      if (!res.ok) throw new Error("Failed to fetch orders");
-      const data = await res.json();
-      setOrders(data);
-      window.lastOrders = data;
-    } catch (e) {
-      console.error("Load orders error", e);
-    } finally {
-      setLoadingOrders(false);
-    }
-  }, [token]);
-
-  // LOAD SHOPS
-  const loadShops = useCallback(async () => {
-    try {
-      const res = await apiFetch("/api/shops");
+      const res = await apiFetch("/api/me/shops");
+      if (res.status === 401) { alert("Session expired — login again"); navigate("/merchant-login"); return; }
       if (!res.ok) throw new Error("Failed to load shops");
       const data = await res.json();
       setShops(data);
+      if (data && data.length) setSelectedShop(data[0]);
     } catch (e) {
       console.error("Load shops error", e);
+      alert("Failed to load shops");
+    } finally {
+      setLoading(false);
     }
-  }, [token]);
-
-  // SOCKET UPDATE
-  useEffect(() => {
-    const cleanup = on("orderStatusUpdate", (payload) => {
-      setOrders((prev) =>
-        prev.map((o) => (String(o._id) === String(payload.orderId) ? { ...o, status: payload.status } : o))
-      );
-    });
-    return cleanup;
-  }, [on]);
-
-  // INITIAL LOAD
-  useEffect(() => {
-    if (token) {
-      loadOrders();
-      loadShops();
-    }
-  }, [token, loadOrders, loadShops]);
-
-  const updateStatus = async (orderId, newStatus) => {
-    try {
-      const res = await apiFetch(`/api/orders/${orderId}/status`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status: newStatus }),
-      });
-      if (!res.ok) throw new Error("Failed to update status");
-      const updated = await res.json();
-      setOrders((prev) => prev.map((o) => (o._id === updated._id ? updated : o)));
-    } catch (e) {
-      console.error("Update status error", e);
-      alert("Failed to update status");
-    }
-  };
-
-  const openShopMenu = (shopId) => navigate(`/shops?open=${shopId}`);
-
-  // LOGIN VIEW
-  if (!token) {
-    return (
-      <div className="min-h-screen bg-gray-50 p-6">
-        <div className="max-w-md mx-auto bg-white shadow-lg rounded-xl p-6">
-          <h1 className="text-2xl font-semibold mb-4 text-center text-blue-600">Merchant Login</h1>
-          <form onSubmit={doLogin} className="space-y-3">
-            <input
-              className="border border-gray-300 rounded p-2 w-full"
-              placeholder="Admin password"
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              required
-            />
-            <button type="submit" className="w-full bg-blue-600 text-white px-4 py-2 rounded">
-              Sign In
-            </button>
-          </form>
-        </div>
-      </div>
-    );
   }
 
-  // DASHBOARD VIEW
-  return (
-    <div className="max-w-5xl mx-auto p-4">
-      <header className="flex items-center justify-between mb-6">
-        <div>
-          <h1 className="text-2xl font-semibold">Merchant Dashboard</h1>
-          <div className="text-sm text-gray-500">Manage orders & quick-access your shops</div>
-        </div>
-        <div className="flex gap-3 items-center text-sm">
-          {connected ? (
-            <span className="text-green-600 font-medium">🟢 Live</span>
-          ) : (
-            <span className="text-red-600">🔴 Offline</span>
-          )}
-          <button onClick={doLogout} className="bg-red-500 text-white px-3 py-1 rounded">
-            Logout
-          </button>
-        </div>
-      </header>
+  async function loadOrdersForShop(shopId) {
+    try {
+      const res = await apiFetch(`/api/shops/${shopId}/orders`); // keep using api route (owner-only version exists too)
+      if (res.status === 401) { alert("Session expired"); navigate("/merchant-login"); return; }
+      if (!res.ok) throw new Error("Failed to load orders");
+      const data = await res.json();
+      setOrders(data || []);
+    } catch (e) {
+      console.error("Load orders error", e);
+      setOrders([]);
+    }
+  }
 
-      <section className="mb-6 grid grid-cols-1 md:grid-cols-3 gap-4">
-        <div className="col-span-2 bg-white p-4 rounded-lg shadow-sm border">
-          <div className="flex items-center justify-between mb-3">
-            <h2 className="text-lg font-medium">Recent Orders</h2>
-            <button onClick={loadOrders} className="px-3 py-1 rounded-md bg-gray-100">
-              Refresh
-            </button>
+  async function loadMenu(shopId) {
+    try {
+      const res = await fetch(`${API_BASE}/api/shops/${shopId}/menu`);
+      if (!res.ok) throw new Error("failed menu");
+      const data = await res.json();
+      setMenuItems(data || []);
+    } catch (e) {
+      console.error("Load menu error", e);
+      setMenuItems([]);
+    }
+  }
+
+  async function addItem() {
+    if (!selectedShop) return alert("Select a shop");
+    if (!newItem.name) return alert("Item name required");
+    try {
+      const res = await apiFetch(`/owner/shops/${selectedShop._id}/items`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: newItem.name, price: Number(newItem.price || 0) })
+      });
+      if (res.status === 401) { alert("Session expired"); navigate("/merchant-login"); return; }
+      if (!res.ok) {
+        const txt = await res.text();
+        alert("Add item failed: " + (txt || res.status));
+        return;
+      }
+      setNewItem({ name: "", price: 0 });
+      await loadMenu(selectedShop._id);
+    } catch (e) {
+      console.error(e);
+      alert("Network error");
+    }
+  }
+
+  async function deleteItem(itemId) {
+    if (!selectedShop) return;
+    if (!confirm("Delete this item?")) return;
+    try {
+      const res = await apiFetch(`/owner/shops/${selectedShop._id}/items/${itemId}`, { method: "DELETE" });
+      if (res.status === 401) { alert("Session expired"); navigate("/merchant-login"); return; }
+      if (!res.ok) {
+        const txt = await res.text();
+        alert("Delete failed: " + (txt || res.status));
+        return;
+      }
+      await loadMenu(selectedShop._id);
+    } catch (e) {
+      console.error(e);
+      alert("Network error");
+    }
+  }
+
+  useEffect(() => {
+    const token = localStorage.getItem("merchant_token");
+    if (!token) {
+      navigate("/merchant-login");
+      return;
+    }
+    loadShops();
+  }, []);
+
+  useEffect(() => {
+    if (selectedShop) {
+      loadOrdersForShop(selectedShop._id);
+      loadMenu(selectedShop._id);
+    } else {
+      setOrders([]);
+      setMenuItems([]);
+    }
+  }, [selectedShop]);
+
+  return (
+    <div className="min-h-screen p-6 bg-gray-50">
+      <div className="max-w-5xl mx-auto bg-white p-6 rounded shadow">
+        <div className="flex justify-between items-center mb-4">
+          <h2 className="text-xl font-semibold">Owner Dashboard</h2>
+          <div className="flex gap-2">
+            <button onClick={logout} className="px-3 py-1 bg-red-500 text-white rounded">Logout</button>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="col-span-1">
+            <h3 className="font-medium mb-2">Your Shops</h3>
+            {loading ? <div>Loading...</div> : shops.length === 0 ? <div>No shops</div> :
+              shops.map(s => (
+                <div key={s._id} className={`p-2 mb-2 border rounded cursor-pointer ${selectedShop && selectedShop._id===s._id ? "bg-blue-50" : ""}`} onClick={()=>setSelectedShop(s)}>
+                  <div className="font-medium">{s.name}</div>
+                  <div className="text-xs text-gray-500">{s.phone}</div>
+                </div>
+              ))
+            }
+
+            <div className="mt-4 border-t pt-3">
+              <h4 className="font-medium">Add Item to Selected Shop</h4>
+              <input value={newItem.name} onChange={e=>setNewItem({...newItem, name:e.target.value})} placeholder="Item name" className="w-full p-2 border rounded my-2"/>
+              <input value={newItem.price} onChange={e=>setNewItem({...newItem, price:e.target.value})} placeholder="Price" type="number" className="w-full p-2 border rounded my-2"/>
+              <button onClick={addItem} className="px-3 py-2 bg-green-600 text-white rounded">Add item</button>
+            </div>
           </div>
 
-          {loadingOrders ? (
-            <div className="text-sm text-gray-500">Loading orders...</div>
-          ) : orders.length === 0 ? (
-            <div className="text-sm text-gray-500">No orders found</div>
-          ) : (
-            <div className="space-y-3">
-              {orders.map((order) => (
-                <div key={order._id} className="flex flex-col sm:flex-row justify-between p-3 bg-white rounded-md border">
-                  <div>
-                    <div className="font-semibold">
-                      {order.customerName}{" "}
-                      <span className="text-xs text-gray-400">• {order.phone}</span>
+          <div className="col-span-2">
+            <h3 className="font-medium mb-2">Orders for {selectedShop ? selectedShop.name : "—"}</h3>
+            {orders.length === 0 ? <div>No orders</div> :
+              <div className="space-y-3">
+                {orders.map(o => (
+                  <div key={o._id} className="p-3 border rounded bg-white flex justify-between">
+                    <div>
+                      <div className="font-medium">{o.customerName} <span className="text-xs text-gray-500">• {o.phone}</span></div>
+                      <div className="text-sm text-gray-600">{o.items.map(i=>`${i.name} x${i.qty}`).join(", ")}</div>
+                      <div className="text-sm text-gray-600">Total: ₹{o.total}</div>
                     </div>
-                    <div className="text-sm text-gray-600">
-                      Items: {order.items.map((i) => `${i.name} x${i.qty}`).join(", ")}
+                    <div className="flex flex-col items-end gap-2">
+                      <div className="text-sm">Status: <b>{o.status}</b></div>
+                      <div className="flex gap-2">
+                        <button onClick={()=>apiFetch(`/api/orders/${o._id}/status`, { method: "PATCH", headers: { "Content-Type":"application/json" }, body: JSON.stringify({ status: "accepted" }) }).then(()=>loadOrdersForShop(selectedShop._id))} className="px-2 py-1 bg-blue-600 text-white rounded">Accept</button>
+                        <button onClick={()=>apiFetch(`/api/orders/${o._id}/status`, { method: "PATCH", headers: { "Content-Type":"application/json" }, body: JSON.stringify({ status: "packed" }) }).then(()=>loadOrdersForShop(selectedShop._id))} className="px-2 py-1 bg-gray-200 rounded">Packed</button>
+                      </div>
                     </div>
-                    <div className="text-sm text-gray-600 mt-1">Total: ₹{order.total}</div>
                   </div>
+                ))}
+              </div>
+            }
 
-                  <div className="flex items-center gap-2 mt-3 sm:mt-0">
-                    <div className="text-sm">
-                      <span className="font-medium">Status:</span>{" "}
-                      <span className="text-blue-600 font-semibold">{order.status}</span>
+            <div className="mt-6">
+              <h3 className="font-medium">Menu for {selectedShop ? selectedShop.name : "—"}</h3>
+              {menuItems.length === 0 ? <div className="text-sm text-gray-500">No items</div> :
+                <div className="space-y-2 mt-2">
+                  {menuItems.map(it => (
+                    <div key={it._id} className="flex justify-between items-center border rounded p-2">
+                      <div>
+                        <div className="font-medium">{it.name} <span className="text-xs text-gray-500">• ₹{it.price}</span></div>
+                        <div className="text-xs text-gray-400">id: {it._id}</div>
+                      </div>
+                      <div>
+                        <button onClick={()=>deleteItem(it._id)} className="px-2 py-1 bg-red-500 text-white rounded">Delete</button>
+                      </div>
                     </div>
-                    <div className="flex items-center gap-2">
-                      {["accepted", "packed", "out-for-delivery", "delivered"].map((st) => {
-                        const isActive = st === order.status;
-                        const disabled =
-                          ["accepted", "packed", "out-for-delivery", "delivered"].indexOf(st) <
-                          ["accepted", "packed", "out-for-delivery", "delivered"].indexOf(order.status);
-                        return (
-                          <button
-                            key={st}
-                            onClick={() => updateStatus(order._id, st)}
-                            disabled={disabled}
-                            className={`px-2 py-1 rounded-md text-sm ${
-                              isActive
-                                ? "bg-green-600 text-white"
-                                : disabled
-                                ? "bg-gray-200 text-gray-600"
-                                : "bg-blue-600 text-white"
-                            }`}
-                          >
-                            {isActive ? `✅ ${st}` : st}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </div>
+                  ))}
                 </div>
-              ))}
+              }
             </div>
-          )}
+          </div>
         </div>
-
-        <aside className="bg-white p-4 rounded-lg shadow-sm border">
-          <h3 className="text-lg font-medium mb-3">Shops</h3>
-          {shops.length === 0 ? (
-            <div className="text-sm text-gray-500">No shops found</div>
-          ) : (
-            <div className="space-y-3">
-              {shops.map((s) => (
-                <div key={s._id} className="flex items-center justify-between border rounded-md p-2">
-                  <div>
-                    <div className="font-medium">{s.name}</div>
-                    <div className="text-xs text-gray-500">{s.phone}</div>
-                  </div>
-                  <button
-                    onClick={() => openShopMenu(s._id)}
-                    className="px-3 py-1 rounded-md bg-blue-600 text-white"
-                  >
-                    Open Menu
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
-        </aside>
-      </section>
+      </div>
     </div>
   );
 }
