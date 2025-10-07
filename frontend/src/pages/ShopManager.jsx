@@ -12,7 +12,7 @@ export default function ShopManager() {
 
   const [customerName, setCustomerName] = useState("");
   const [digitsOnlyPhone, setDigitsOnlyPhone] = useState("");
-  const [phoneError, setPhoneError] = useState(""); // 🟢 new: to store validation message
+  const [phoneError, setPhoneError] = useState("");
 
   const [cart, setCart] = useState({});
 
@@ -37,7 +37,8 @@ export default function ShopManager() {
       const data = await res.json();
       setShops(data);
       if (data.length) setSelectedShop(data[0]);
-    } catch {
+    } catch (e) {
+      console.error("Load shops error", e);
       alert("Failed to load shops");
     } finally {
       setLoading(false);
@@ -49,7 +50,8 @@ export default function ShopManager() {
       const res = await fetch(`${API_BASE}/api/shops/${shopId}/menu`);
       const data = await res.json();
       setMenu(data);
-    } catch {
+    } catch (e) {
+      console.error("Load menu error", e);
       alert("Failed to load menu");
     }
   }
@@ -62,7 +64,7 @@ export default function ShopManager() {
     setCart(prev => {
       const copy = { ...prev };
       if (qty <= 0) delete copy[id];
-      else copy[id] = qty;
+      else copy[id] = Number(qty);
       return copy;
     });
   }
@@ -79,19 +81,32 @@ export default function ShopManager() {
     setQty(id, 1);
   }
 
-  const cartItems = Object.keys(cart).map(id => {
-    const item = menu.find(m => m._id === id);
-    return { ...item, qty: cart[id] };
-  });
+  function cartItemsArray() {
+    return Object.keys(cart).map(id => {
+      const qty = cart[id];
+      const item = menu.find(m => String(m._id) === String(id));
+      return {
+        _id: id,
+        qty,
+        name: item ? item.name : "Item",
+        price: item ? Number(item.price || 0) : 0,
+      };
+    });
+  }
 
-  const totalQty = cartItems.reduce((s, i) => s + i.qty, 0);
-  const totalPrice = cartItems.reduce((s, i) => s + i.qty * i.price, 0);
+  function cartSummary() {
+    const items = cartItemsArray();
+    const totalQty = items.reduce((s, i) => s + i.qty, 0);
+    const totalPrice = items.reduce((s, i) => s + i.qty * i.price, 0);
+    return { totalQty, totalPrice, items };
+  }
 
-  // ---------------- Phone input logic ----------------
+  // Phone handling
   function handlePhoneChange(e) {
+    // allow digits only, up to 10
     const raw = e.target.value.replace(/\D/g, "").slice(0, 10);
     setDigitsOnlyPhone(raw);
-    if (raw.length === 10) setPhoneError(""); // clear error when valid
+    if (raw.length === 10) setPhoneError("");
   }
 
   function normalizedPhoneForSubmit() {
@@ -100,15 +115,16 @@ export default function ShopManager() {
     return `+${d}`;
   }
 
-  // ---------------- Place Order ----------------
+  // Place order
   async function placeOrder() {
     if (!selectedShop) return alert("Select a shop");
-    if (!cartItems.length) return alert("Cart is empty");
-    if (!customerName) return alert("Enter your name");
+    const { items } = cartSummary();
+    if (!items.length) return alert("Cart is empty");
+    if (!customerName) return alert("Enter name");
 
     const digits = digitsOnlyPhone.replace(/\D/g, "");
     if (digits.length !== 10) {
-      setPhoneError("Enter a valid 10-digit phone number"); // 🟥 inline error
+      setPhoneError("Enter a valid 10-digit phone number");
       return;
     }
 
@@ -116,7 +132,7 @@ export default function ShopManager() {
       shop: selectedShop._id,
       customerName,
       phone: normalizedPhoneForSubmit(),
-      items: cartItems.map(i => ({ name: i.name, qty: i.qty, price: i.price })),
+      items: items.map(i => ({ name: i.name, qty: i.qty, price: i.price })),
     };
 
     try {
@@ -125,52 +141,67 @@ export default function ShopManager() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
-      if (!res.ok) throw new Error(await res.text());
+      if (!res.ok) {
+        const txt = await res.text();
+        throw new Error(txt || "Order failed");
+      }
       const order = await res.json();
       alert(
         "Order placed: " +
-          (order.orderNumber
-            ? `#${String(order.orderNumber).padStart(6, "0")}`
-            : order._id.slice(0, 8))
+          (order.orderNumber ? `#${String(order.orderNumber).padStart(6, "0")}` : (order._id ? order._id.slice(0,8) : "OK"))
       );
       setCart({});
       setDigitsOnlyPhone("");
       setPhoneError("");
     } catch (e) {
-      alert("Order failed: " + e.message);
+      console.error("Order failed", e);
+      alert("Order failed: " + (e.message || e));
     }
   }
 
-  // ---------------- Quantity Controls ----------------
+  // Quantity control UI
   function QtyControl({ item }) {
-    const qty = getQty(item._id);
-    if (!item.available)
+    const id = item._id;
+    const available = Boolean(item.available);
+    const qty = getQty(id);
+
+    if (!available) {
       return (
-        <button disabled className="px-3 py-1 bg-gray-300 text-gray-700 rounded">
-          Unavailable
-        </button>
+        <div className="flex items-center gap-2">
+          <button className="px-3 py-1 bg-gray-300 text-gray-700 rounded" disabled>
+            Unavailable
+          </button>
+        </div>
       );
-    if (!qty)
+    }
+
+    if (!qty || qty <= 0) {
       return (
-        <button
-          onClick={() => addInitial(item._id)}
-          className="px-3 py-1 bg-green-600 text-white rounded"
-        >
-          Add
-        </button>
+        <div>
+          <button
+            onClick={() => addInitial(id)}
+            className="px-3 py-1 bg-green-600 text-white rounded"
+          >
+            Add
+          </button>
+        </div>
       );
+    }
+
     return (
       <div className="flex items-center gap-2">
         <button
-          onClick={() => decrement(item._id)}
+          onClick={() => decrement(id)}
           className="px-2 py-1 bg-gray-200 rounded"
+          aria-label="decrement"
         >
           −
         </button>
         <div className="px-3 py-1 border rounded">{qty}</div>
         <button
-          onClick={() => increment(item._id)}
+          onClick={() => increment(id)}
           className="px-2 py-1 bg-gray-200 rounded"
+          aria-label="increment"
         >
           +
         </button>
@@ -178,17 +209,24 @@ export default function ShopManager() {
     );
   }
 
+  const { totalQty, totalPrice } = cartSummary();
+
+  // Button enabled state: name present, phone valid (10 digits), cart not empty
+  const isPlaceOrderEnabled =
+    customerName.trim().length > 0 &&
+    digitsOnlyPhone.replace(/\D/g, "").length === 10 &&
+    totalQty > 0;
+
   return (
     <div className="min-h-screen p-6 bg-gray-50">
       <div className="max-w-5xl mx-auto bg-white p-6 rounded shadow">
         <h1 className="text-2xl font-semibold mb-4">Shops & Menu</h1>
 
-        {/* -------- Customer Input Section -------- */}
         <div className="mb-4 p-4 border rounded bg-gray-50">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 items-start">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             <input
               value={customerName}
-              onChange={e => setCustomerName(e.target.value)}
+              onChange={(e) => setCustomerName(e.target.value)}
               placeholder="Your Name"
               className="p-2 border rounded w-full"
             />
@@ -202,52 +240,34 @@ export default function ShopManager() {
                   value={digitsOnlyPhone}
                   onChange={handlePhoneChange}
                   placeholder="Phone (10 digits)"
-                  className={`p-2 border rounded-r w-full ${
-                    phoneError ? "border-red-500" : ""
-                  }`}
+                  className={`p-2 border rounded-r w-full ${phoneError ? "border-red-500" : ""}`}
                   inputMode="numeric"
                   pattern="[0-9]*"
                   maxLength={10}
                 />
               </div>
-              {/* 🟢 Inline error message */}
-              {phoneError && (
-                <div className="text-red-600 text-sm mt-1">{phoneError}</div>
-              )}
+              {phoneError && <div className="text-red-600 text-sm mt-1">{phoneError}</div>}
             </div>
           </div>
         </div>
 
-        {/* -------- Shops & Menu -------- */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <div>
+          <div className="col-span-1">
             <h3 className="font-medium mb-2">Available Shops</h3>
-            {loading ? (
-              <div>Loading...</div>
-            ) : shops.length === 0 ? (
-              <div>No shops</div>
-            ) : (
+
+            {loading ? <div>Loading...</div> : shops.length === 0 ? <div>No shops</div> :
               shops.map(s => (
-                <div
-                  key={s._id}
-                  onClick={() => setSelectedShop(s)}
-                  className={`p-3 mb-3 border rounded cursor-pointer ${
-                    selectedShop && selectedShop._id === s._id
-                      ? "bg-blue-50"
-                      : ""
-                  }`}
-                >
+                <div key={s._id} className={`p-3 mb-3 border rounded cursor-pointer ${selectedShop && selectedShop._id === s._id ? "bg-blue-50" : ""}`} onClick={() => setSelectedShop(s)}>
                   <div className="font-medium">{s.name}</div>
                   <div className="text-xs text-gray-500">{s.phone}</div>
+                  {s.description ? <div className="text-xs text-gray-400">{s.description}</div> : null}
                 </div>
               ))
-            )}
+            }
           </div>
 
           <div className="col-span-2">
-            <h3 className="font-medium mb-2">
-              Menu for {selectedShop ? selectedShop.name : "—"}
-            </h3>
+            <h3 className="font-medium mb-2">Menu for {selectedShop ? selectedShop.name : "—"}</h3>
 
             {selectedShop === null ? (
               <div>Select a shop to view its menu</div>
@@ -256,41 +276,37 @@ export default function ShopManager() {
             ) : (
               <div className="space-y-3">
                 {menu.map(item => (
-                  <div
-                    key={item._id}
-                    className="p-3 border rounded flex justify-between items-center"
-                  >
+                  <div key={item._id} className="p-3 border rounded flex justify-between items-center">
                     <div>
-                      <div className="font-medium">
-                        {item.name} • ₹{item.price}
-                      </div>
-                      <div className="text-xs text-gray-500">
-                        {item.available ? "Available" : "Unavailable"}
-                      </div>
+                      <div className="font-medium">{item.name} • ₹{item.price}</div>
+                      <div className="text-xs text-gray-500">{item.available ? "Available" : "Unavailable"}</div>
                     </div>
-                    <QtyControl item={item} />
+
+                    <div className="flex items-center gap-4">
+                      <QtyControl item={item} />
+                    </div>
                   </div>
                 ))}
               </div>
             )}
 
-            {/* -------- Cart summary -------- */}
             <div className="mt-4 flex items-center justify-between">
               <div>
-                <div className="text-sm text-gray-600">
-                  Cart: <b>{totalQty}</b> items
-                </div>
-                <div className="text-sm text-gray-800">
-                  Total: <b>₹{totalPrice}</b>
-                </div>
+                <div className="text-sm text-gray-600">Cart: <b>{totalQty}</b> items</div>
+                <div className="text-sm text-gray-800">Total: <b>₹{totalPrice}</b></div>
               </div>
-              <button
-                onClick={placeOrder}
-                className="px-4 py-2 bg-green-600 text-white rounded"
-              >
-                Place Order
-              </button>
+
+              <div>
+                <button
+                  onClick={placeOrder}
+                  className={`px-4 py-2 text-white rounded ${isPlaceOrderEnabled ? "bg-green-600" : "bg-gray-400 cursor-not-allowed"}`}
+                  disabled={!isPlaceOrderEnabled}
+                >
+                  Place Order
+                </button>
+              </div>
             </div>
+
           </div>
         </div>
       </div>
