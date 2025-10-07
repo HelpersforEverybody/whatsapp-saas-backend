@@ -4,14 +4,15 @@ import { apiFetch, getApiBase } from "../hooks/useApi";
 import { useNavigate } from "react-router-dom";
 
 /**
- * Owner dashboard:
- * - Shows only owner's shops (loaded via /api/me/shops using merchant token)
+ * Owner Dashboard
+ * - Shows only owner's shops (loaded via /api/me/shops)
  * - Shows orders for selected shop (owner-only endpoint /api/shops/:shopId/orders)
- * - Shows menu for selected shop (/api/shops/:shopId/menu)
  * - Add item, edit, delete, toggle availability using owner endpoints
  *
- * This file displays orderNumber as 6-digit numeric when available:
- * Order #000123 (if order.orderNumber exists) else fallback short id.
+ * Changes:
+ *  - Buttons reflect status and disable correctly.
+ *  - "Accept" is clickable only when status === "received".
+ *  - Added "Cancel" button to set status to "cancelled" (order remains visible).
  */
 
 export default function OwnerDashboard() {
@@ -29,22 +30,19 @@ export default function OwnerDashboard() {
     navigate("/merchant-login");
   }
 
-  // helper: format order number (6 digits) or fallback
+  // helper: format order label (6-digit padded number when present)
   function displayOrderLabel(order) {
     if (order.orderNumber || order.orderNumber === 0) {
       return `Order #${String(order.orderNumber).padStart(6, "0")}`;
     }
-    // fallback to short id
     return `Order #${String(order._id || "").slice(0, 6)}`;
   }
 
   async function loadShops() {
     setLoading(true);
     try {
-      // /api/me/shops requires merchant JWT; apiFetch attaches token
       const res = await apiFetch("/api/me/shops");
       if (!res.ok) {
-        // token may be expired or invalid
         throw new Error("Failed to load shops");
       }
       const data = await res.json();
@@ -53,7 +51,6 @@ export default function OwnerDashboard() {
     } catch (e) {
       console.error("Failed to load shops", e);
       alert("Failed to load shops (re-login if needed)");
-      // auto-redirect to login if unauthorized
       const token = localStorage.getItem("merchant_token");
       if (!token) navigate("/merchant-login");
     } finally {
@@ -67,11 +64,8 @@ export default function OwnerDashboard() {
         setOrders([]);
         return;
       }
-      // requireOwner on backend; apiFetch will include merchant token
       const res = await apiFetch(`/api/shops/${shopId}/orders`);
-      if (!res.ok) {
-        throw new Error("Failed to load orders");
-      }
+      if (!res.ok) throw new Error("Failed to load orders");
       const data = await res.json();
       setOrders(data);
     } catch (e) {
@@ -86,7 +80,6 @@ export default function OwnerDashboard() {
         setMenu([]);
         return;
       }
-      // public endpoint okay
       const res = await fetch(`${API_BASE}/api/shops/${shopId}/menu`);
       if (!res.ok) throw new Error("Failed to load menu");
       const data = await res.json();
@@ -97,7 +90,39 @@ export default function OwnerDashboard() {
     }
   }
 
-  // Add item (owner)
+  // optimistic status update helper
+  async function updateOrderStatus(orderId, newStatus) {
+    // optimistic UI: update orders array locally first
+    setOrders(prev => prev.map(o => (o._id === orderId ? { ...o, status: newStatus } : o)));
+
+    try {
+      const res = await apiFetch(`/api/orders/${orderId}/status`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: newStatus }),
+      });
+      if (!res.ok) {
+        // revert UI if server failed
+        const txt = await res.text();
+        throw new Error(txt || "Failed to update status");
+      }
+      const updated = await res.json();
+      setOrders(prev => prev.map(o => (o._id === updated._id ? updated : o)));
+    } catch (e) {
+      console.error("Update status error", e);
+      alert("Failed to update status: " + (e.message || e));
+      // re-fetch orders to ensure state is correct
+      if (selectedShop && selectedShop._id) loadOrdersForShop(selectedShop._id);
+    }
+  }
+
+  // cancel order but keep visible
+  async function cancelOrder(orderId) {
+    if (!confirm("Cancel this order?")) return;
+    await updateOrderStatus(orderId, "cancelled");
+  }
+
+  // item actions (owner)
   async function addItem() {
     if (!selectedShop) return alert("Select a shop");
     if (!newItem.name) return alert("Item name required");
@@ -113,11 +138,10 @@ export default function OwnerDashboard() {
         return;
       }
       setNewItem({ name: "", price: "" });
-      // reload menu
       await loadMenuForShop(selectedShop._id);
     } catch (e) {
       console.error(e);
-      alert("Network error adding item");
+      alert("Network error");
     }
   }
 
@@ -239,24 +263,68 @@ export default function OwnerDashboard() {
             <h3 className="font-medium mb-2">Orders for {selectedShop ? selectedShop.name : "—"}</h3>
             {orders.length === 0 ? <div>No orders</div> :
               <div className="space-y-3">
-                {orders.map(o => (
-                  <div key={o._id} className="p-3 border rounded bg-white flex justify-between">
-                    <div>
-                      <div className="font-medium">{displayOrderLabel(o)} — <span className="text-sm text-gray-600">{o.status}</span></div>
-                      <div className="text-sm text-gray-600">{o.items.map(i=>`${i.name} x${i.qty}`).join(", ")}</div>
-                      <div className="text-sm text-gray-600">₹{o.total}</div>
-                    </div>
-                    <div className="flex flex-col items-end gap-2">
-                      <div className="text-sm">Customer: <b>{o.customerName}</b></div>
-                      <div className="flex gap-2">
-                        <button onClick={()=>apiFetch(`/api/orders/${o._id}/status`, { method: "PATCH", headers: { "Content-Type":"application/json" }, body: JSON.stringify({ status: "accepted" }) }).then(()=>loadOrdersForShop(selectedShop._id))} className="px-2 py-1 bg-blue-600 text-white rounded">Accept</button>
-                        <button onClick={()=>apiFetch(`/api/orders/${o._id}/status`, { method: "PATCH", headers: { "Content-Type":"application/json" }, body: JSON.stringify({ status: "packed" }) }).then(()=>loadOrdersForShop(selectedShop._id))} className="px-2 py-1 bg-gray-200 rounded">Packed</button>
-                        <button onClick={()=>apiFetch(`/api/orders/${o._id}/status`, { method: "PATCH", headers: { "Content-Type":"application/json" }, body: JSON.stringify({ status: "out-for-delivery" }) }).then(()=>loadOrdersForShop(selectedShop._id))} className="px-2 py-1 bg-gray-200 rounded">Out for delivery</button>
-                        <button onClick={()=>apiFetch(`/api/orders/${o._id}/status`, { method: "PATCH", headers: { "Content-Type":"application/json" }, body: JSON.stringify({ status: "delivered" }) }).then(()=>loadOrdersForShop(selectedShop._id))} className="px-2 py-1 bg-gray-200 rounded">Delivered</button>
+                {orders.map(o => {
+                  const status = (o.status || "").toLowerCase();
+                  return (
+                    <div key={o._id} className="p-3 border rounded bg-white flex justify-between">
+                      <div>
+                        <div className="font-medium">{displayOrderLabel(o)} — <span className="text-sm text-gray-600">{status}</span></div>
+                        <div className="text-sm text-gray-600">{o.items.map(i=>`${i.name} x${i.qty}`).join(", ")}</div>
+                        <div className="text-sm text-gray-600">₹{o.total}</div>
+                      </div>
+
+                      <div className="flex flex-col items-end gap-2">
+                        <div className="text-sm">Customer: <b>{o.customerName}</b></div>
+                        <div className="flex gap-2">
+                          {/* Accept only when received */}
+                          <button
+                            onClick={() => updateOrderStatus(o._id, "accepted")}
+                            disabled={status !== "received"}
+                            className={`px-3 py-1 rounded ${status === "received" ? "bg-blue-600 text-white" : "bg-gray-200 text-gray-600"}`}
+                          >
+                            Accept
+                          </button>
+
+                          {/* Packed only when accepted */}
+                          <button
+                            onClick={() => updateOrderStatus(o._id, "packed")}
+                            disabled={status !== "accepted"}
+                            className={`px-3 py-1 rounded ${status === "accepted" ? "bg-yellow-500 text-white" : "bg-gray-200 text-gray-600"}`}
+                          >
+                            Packed
+                          </button>
+
+                          {/* Out for delivery only when packed */}
+                          <button
+                            onClick={() => updateOrderStatus(o._id, "out-for-delivery")}
+                            disabled={status !== "packed"}
+                            className={`px-3 py-1 rounded ${status === "packed" ? "bg-indigo-600 text-white" : "bg-gray-200 text-gray-600"}`}
+                          >
+                            Out for delivery
+                          </button>
+
+                          {/* Delivered only when out-for-delivery */}
+                          <button
+                            onClick={() => updateOrderStatus(o._id, "delivered")}
+                            disabled={status !== "out-for-delivery"}
+                            className={`px-3 py-1 rounded ${status === "out-for-delivery" ? "bg-green-600 text-white" : "bg-gray-200 text-gray-600"}`}
+                          >
+                            Delivered
+                          </button>
+
+                          {/* Cancel always allowed unless already delivered/cancelled */}
+                          <button
+                            onClick={() => cancelOrder(o._id)}
+                            disabled={status === "delivered" || status === "cancelled"}
+                            className={`px-3 py-1 rounded ${status === "cancelled" ? "bg-gray-400 text-white" : "bg-red-500 text-white"}`}
+                          >
+                            Cancel
+                          </button>
+                        </div>
                       </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             }
 
