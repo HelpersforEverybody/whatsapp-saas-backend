@@ -1,5 +1,19 @@
-// server.js — Backend with Shop/Menu + WhatsApp + Socket.io + JWT (admin + merchant)
-// Full file — paste into project root and deploy
+// server.js
+//
+// Full backend with Shop/Menu + WhatsApp (Twilio optional) + Socket.io + JWT (admin + merchant)
+// Routes:
+//  - Auth: /auth/login (admin), /auth/signup (merchant), /auth/merchant-login
+//  - Owner endpoints: /api/me/shops, /api/shops (create by owner), /api/shops/:shopId/items (CRUD, owner-only)
+//  - Orders: /api/orders, /api/orders/:id, /api/orders/:id/status
+//  - Webhook: /webhook/whatsapp
+//
+// Notes:
+//  - Uses process.env.API_KEY for admin API key (x-api-key)
+//  - Uses process.env.JWT_SECRET for JWT signing
+//  - Uses process.env.ADMIN_PASSWORD for simple admin login
+//  - Uses bcryptjs for password hashing (pure JS, safer for many hosts)
+//  - Twilio usage is optional and only runs if TWILIO_* env vars configured
+//  - requireOwner middleware validates merchant JWT and checks shop ownership when shopId provided
 
 require('dotenv').config();
 const express = require('express');
@@ -15,7 +29,7 @@ const { Server } = require('socket.io');
 
 const io = new Server(server, {
   cors: {
-    origin: '*', // Replace with your frontend domain in production
+    origin: '*', // change to your frontend URL in production
     methods: ['GET', 'POST', 'PATCH', 'PUT', 'DELETE']
   }
 });
@@ -51,7 +65,7 @@ const API_KEY_ENV = (process.env.API_KEY || '').toString().trim();
 const JWT_SECRET = (process.env.JWT_SECRET || '').toString().trim();
 const ADMIN_PASSWORD = (process.env.ADMIN_PASSWORD || '').toString().trim();
 
-function verifyJwtTokenFromHeader(authHeader) {
+function verifyJwtToken(authHeader) {
   if (!authHeader) return null;
   const parts = authHeader.split(/\s+/);
   if (parts.length !== 2 || parts[0].toLowerCase() !== 'bearer') return null;
@@ -64,69 +78,25 @@ function verifyJwtTokenFromHeader(authHeader) {
   }
 }
 
-// Middleware: allow admin API key OR valid JWT (admin or merchant).
-// If JWT valid, set req.auth = decoded
+// allow either admin API_KEY OR valid Bearer JWT (admin or merchant)
 const requireApiKeyOrJwt = (req, res, next) => {
   const key = (req.get('x-api-key') || req.query.api_key || '').toString().trim();
+  if (!API_KEY_ENV) {
+    return res.status(500).json({ error: 'server misconfigured: API_KEY missing' });
+  }
 
   const authHeader = (req.get('authorization') || '').toString().trim();
-  if (authHeader && JWT_SECRET) {
-    const decoded = verifyJwtTokenFromHeader(authHeader);
+  if (authHeader) {
+    const decoded = verifyJwtToken(authHeader);
     if (decoded && (decoded.role === 'admin' || decoded.role === 'merchant')) {
       req.auth = decoded;
       return next();
     }
   }
 
-  if (!API_KEY_ENV) {
-    // If no server API key configured, still allow JWT but if none present, error
-    if (!req.auth) return res.status(500).json({ error: 'server misconfigured: API_KEY missing' });
-  } else {
-    if (key && key === API_KEY_ENV) return next();
-  }
+  if (key && key === API_KEY_ENV) return next();
 
   return res.status(401).json({ error: 'unauthorized' });
-};
-
-// Middleware for merchant-only routes (requires valid merchant JWT)
-const requireMerchant = (req, res, next) => {
-  const authHeader = (req.get('authorization') || '').toString().trim();
-  if (!JWT_SECRET) return res.status(500).json({ error: 'server misconfigured: JWT_SECRET missing' });
-  const decoded = verifyJwtTokenFromHeader(authHeader);
-  if (!decoded || decoded.role !== 'merchant') {
-    return res.status(401).json({ error: 'unauthorized' });
-  }
-  req.merchantId = decoded.userId;
-  req.auth = decoded;
-  next();
-};
-
-// Middleware to ensure merchant owns the referenced shop (if shopId provided)
-const requireOwner = async (req, res, next) => {
-  // First ensure merchant auth
-  try {
-    const authHeader = (req.get('authorization') || '').toString().trim();
-    if (!JWT_SECRET) return res.status(500).json({ error: 'server misconfigured: JWT_SECRET missing' });
-    const decoded = verifyJwtTokenFromHeader(authHeader);
-    if (!decoded || decoded.role !== 'merchant') {
-      return res.status(401).json({ error: 'unauthorized' });
-    }
-    req.merchantId = decoded.userId;
-    req.auth = decoded;
-
-    const shopId = req.params.shopId || req.body.shopId || req.body.shop;
-    if (shopId) {
-      const shop = await Shop.findById(shopId).lean();
-      if (!shop) return res.status(404).json({ error: 'shop not found' });
-      if (!shop.owner || String(shop.owner) !== String(req.merchantId)) {
-        return res.status(403).json({ error: 'forbidden: not owner of shop' });
-      }
-    }
-    next();
-  } catch (e) {
-    console.error('requireOwner error:', e);
-    return res.status(400).json({ error: 'invalid request' });
-  }
 };
 
 /* ----------------- MongoDB connection ----------------- */
@@ -152,7 +122,7 @@ userSchema.methods.verifyPassword = function (plain) {
 };
 const User = mongoose.model('User', userSchema);
 
-// Shop
+// Shop (owner optional)
 const shopSchema = new mongoose.Schema({
   name: { type: String, required: true },
   phone: { type: String, required: true, unique: true },
@@ -221,9 +191,34 @@ async function sendWhatsAppMessageSafe(toPhone, text) {
   }
 }
 
+/* ----------------- Owner middleware (merchant) ----------------- */
+// requireOwner: validates merchant JWT and ensures ownership when shopId provided
+const requireOwner = async (req, res, next) => {
+  const authHeader = (req.get('authorization') || '').toString().trim();
+  const decoded = verifyJwtToken(authHeader);
+  if (!decoded || decoded.role !== 'merchant') {
+    return res.status(401).json({ error: 'unauthorized' });
+  }
+  req.merchantId = decoded.userId;
+
+  const shopId = req.params.shopId || req.body.shopId || req.body.shop;
+  if (shopId) {
+    try {
+      const shop = await Shop.findById(shopId).lean();
+      if (!shop) return res.status(404).json({ error: 'shop not found' });
+      if (!shop.owner || String(shop.owner) !== String(req.merchantId)) {
+        return res.status(403).json({ error: 'forbidden: not owner of shop' });
+      }
+    } catch (e) {
+      return res.status(400).json({ error: 'invalid shop id' });
+    }
+  }
+  next();
+};
+
 /* ----------------- Auth endpoints ----------------- */
 
-// Admin login (password)
+// Admin login (existing admin password method)
 app.post('/auth/login', (req, res) => {
   try {
     const { password } = req.body || {};
@@ -284,8 +279,19 @@ app.post('/auth/merchant-login', async (req, res) => {
 /* Health check */
 app.get('/status', (req, res) => res.json({ status: 'ok', time: new Date() }));
 
-/* Create Shop (merchant owner creates) */
-app.post('/api/shops', requireMerchant, async (req, res) => {
+/* Return shops owned by current merchant (requires merchant JWT) */
+app.get('/api/me/shops', requireOwner, async (req, res) => {
+  try {
+    const shops = await Shop.find({ owner: req.merchantId }).select('-__v').lean();
+    res.json(shops);
+  } catch (err) {
+    console.error('Me shops error:', err);
+    res.status(500).json({ error: 'failed to load your shops' });
+  }
+});
+
+/* Create Shop (owner creates) */
+app.post('/api/shops', requireOwner, async (req, res) => {
   try {
     const { name, phone, description } = req.body;
     if (!name || !phone) return res.status(400).json({ error: 'name and phone required' });
@@ -294,27 +300,6 @@ app.post('/api/shops', requireMerchant, async (req, res) => {
   } catch (err) {
     console.error('Create shop error:', err);
     res.status(500).json({ error: 'failed to create shop', detail: err.message });
-  }
-});
-
-/* NEW: Get shops owned by current merchant (includes menu items) */
-app.get('/api/me/shops', requireMerchant, async (req, res) => {
-  try {
-    const shops = await Shop.find({ owner: req.merchantId }).lean();
-    // load menu items for each shop
-    const shopIds = shops.map(s => s._id);
-    const items = await MenuItem.find({ shop: { $in: shopIds } }).lean();
-    const itemsByShop = {};
-    items.forEach(it => {
-      const sid = String(it.shop);
-      itemsByShop[sid] = itemsByShop[sid] || [];
-      itemsByShop[sid].push(it);
-    });
-    const result = shops.map(s => ({ ...s, menu: itemsByShop[String(s._id)] || [] }));
-    res.json(result);
-  } catch (err) {
-    console.error('Get my shops error:', err);
-    res.status(500).json({ error: 'failed to load shops' });
   }
 });
 
@@ -350,17 +335,17 @@ app.delete('/api/shops/:shopId/items/:itemId', requireOwner, async (req, res) =>
   try {
     const item = await MenuItem.findOneAndDelete({ _id: req.params.itemId, shop: req.params.shopId });
     if (!item) return res.status(404).json({ error: 'not found' });
-    res.json({ ok: true });
+    res.json({ ok: true, deletedId: req.params.itemId });
   } catch (err) {
     console.error('Delete item error:', err);
-    res.status(500).json({ error: 'failed' });
+    res.status(500).json({ error: 'failed to delete item' });
   }
 });
 
 /* List menu (public) */
 app.get('/api/shops/:shopId/menu', async (req, res) => {
   try {
-    const items = await MenuItem.find({ shop: req.params.shopId, available: true }).select('-__v').lean();
+    const items = await MenuItem.find({ shop: req.params.shopId }).select('-__v').lean();
     res.json(items);
   } catch (err) {
     console.error('List menu error:', err);
@@ -393,7 +378,7 @@ app.post('/api/orders', requireApiKeyOrJwt, async (req, res) => {
   }
 });
 
-/* List orders (admin or merchant) */
+/* List orders (merchant/admin) */
 app.get('/api/orders', requireApiKeyOrJwt, async (req, res) => {
   try {
     const { shopId } = req.query;
@@ -428,42 +413,23 @@ app.get('/api/shops/:shopId/orders', requireOwner, async (req, res) => {
   }
 });
 
-/* Update order status
-   - Allow admin via API key
-   - Allow merchant via JWT only if merchant owns the order's shop
-*/
+/* Update order status (merchant/admin) */
 app.patch('/api/orders/:id/status', requireApiKeyOrJwt, async (req, res) => {
   try {
     const { status } = req.body;
     if (!status) return res.status(400).json({ error: 'status required' });
 
-    // Find order and populate shop.owner to check ownership if needed
-    const order = await Order.findById(req.params.id).populate('shop').exec();
+    const order = await Order.findByIdAndUpdate(req.params.id, { status }, { new: true });
     if (!order) return res.status(404).json({ error: 'not found' });
 
-    // If request used JWT merchant (req.auth set by requireApiKeyOrJwt), enforce ownership
-    if (req.auth && req.auth.role === 'merchant') {
-      if (!order.shop || !order.shop.owner || String(order.shop.owner) !== String(req.auth.userId)) {
-        return res.status(403).json({ error: 'forbidden: not owner of this order/shop' });
-      }
-    } else if (!req.get('x-api-key') || req.get('x-api-key') !== API_KEY_ENV) {
-      // not API key and not merchant -> forbidden
-      return res.status(401).json({ error: 'unauthorized' });
-    }
-
-    order.status = status;
-    await order.save();
-
-    // notify customer via Twilio (optional)
     sendWhatsAppMessageSafe(order.phone, `Order ${order._id} status updated: ${status}`).catch(() => {});
 
-    // Emit socket update
     try {
       const payload = {
         orderId: order._id.toString(),
         status,
         at: new Date().toISOString(),
-        meta: { note: 'updated via merchant/dashboard', shop: order.shop ? String(order.shop._id) : null }
+        meta: { note: 'updated via merchant/dashboard', shop: order.shop ? order.shop.toString() : null }
       };
       emitOrderUpdate(order._id.toString(), payload);
       console.log('Emitted orderStatusUpdate for', order._id.toString(), payload);
@@ -502,8 +468,8 @@ app.post('/webhook/whatsapp', async (req, res) => {
         if (!items.length) twiml.message(`No items found for ${shop.name}.`);
         else {
           let msg = `Menu for ${shop.name}:\n`;
-          items.forEach(it => (msg += `${it.externalId}. ${it.name} — ₹${it.price}\n`));
-          msg += `\nTo order: order ${shop.phone} <itemId> <qty>\nExample: order ${shop.phone} ${items[0].externalId} 2`;
+          items.forEach(it => (msg += `${it.externalId || it._id}. ${it.name} — ₹${it.price}\n`));
+          msg += `\nTo order: order ${shop.phone} <itemId> <qty>\nExample: order ${shop.phone} ${items[0].externalId || items[0]._id} 2`;
           twiml.message(msg);
         }
       }
