@@ -1,307 +1,241 @@
-// frontend/src/pages/OwnerDashboard.jsx
 import React, { useEffect, useState } from "react";
-import { apiFetch, getApiBase } from "../hooks/useApi";
-import { useNavigate } from "react-router-dom";
+
+const API_BASE = import.meta.env.VITE_API_BASE || "https://whatsapp-saas-backend-f9ot.onrender.com";
 
 export default function OwnerDashboard() {
-  const API_BASE = getApiBase();
-  const navigate = useNavigate();
   const [shops, setShops] = useState([]);
   const [selectedShop, setSelectedShop] = useState(null);
-  const [orders, setOrders] = useState([]);
   const [menu, setMenu] = useState([]);
-  const [newItem, setNewItem] = useState({ name: "", price: "" });
-  const [loading, setLoading] = useState(false);
+  const [orders, setOrders] = useState([]);
+  const [itemName, setItemName] = useState("");
+  const [itemPrice, setItemPrice] = useState("");
+  const token = localStorage.getItem("token");
 
-  function logout() {
-    localStorage.removeItem("merchant_token");
-    navigate("/merchant-login");
-  }
-
-  // load shops for current merchant
-  async function loadMyShops() {
-    setLoading(true);
+  // Load only shops owned by logged-in merchant
+  const loadMyShops = async () => {
     try {
-      // Prefer owner-specific endpoint if backend provides it.
-      // If your backend doesn't have /api/me/shops, fallback to /api/shops
-      let res = await apiFetch("/api/me/shops");
-      if (!res.ok) {
-        // fallback to public shops then filter by owner client-side (older approach)
-        res = await apiFetch("/api/shops");
-        if (!res.ok) throw new Error("Failed to load shops");
-        const all = await res.json();
-        setShops(all);
-        if (all.length) setSelectedShop(all[0]);
-        setLoading(false);
+      const res = await fetch(`${API_BASE}/api/me/shops`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.status === 401) {
+        alert("Session expired, please login again.");
+        localStorage.clear();
+        window.location.href = "/merchant-login";
         return;
       }
       const data = await res.json();
-      setShops(data);
-      if (data.length) setSelectedShop(data[0]);
-    } catch (e) {
-      console.error("Load shops error", e);
-      alert("Failed to load your shops (re-login if needed)");
-    } finally {
-      setLoading(false);
+      setShops(data || []);
+      if (data.length > 0) setSelectedShop(data[0]);
+    } catch (err) {
+      console.error("Failed to load shops:", err);
+      alert("Failed to load shops (re-login if needed)");
     }
-  }
+  };
 
-  // load orders for a shop (owner-only endpoint)
-  async function loadOrdersForShop(shopId) {
+  const loadMenu = async (shopId) => {
+    if (!shopId) return;
     try {
-      const res = await apiFetch(`/api/shops/${shopId}/orders`);
-      if (!res.ok) {
-        console.warn("Load orders for shop failed", res.status);
+      const res = await fetch(`${API_BASE}/api/shops/${shopId}/menu`);
+      const data = await res.json();
+      setMenu(data);
+    } catch (err) {
+      console.error("Load menu failed:", err);
+    }
+  };
+
+  const loadOrders = async (shopId) => {
+    if (!shopId) return;
+    try {
+      const res = await fetch(`${API_BASE}/api/shops/${shopId}/orders`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.status === 403) {
+        console.warn("Forbidden: not your shop");
         setOrders([]);
         return;
       }
       const data = await res.json();
       setOrders(data);
-    } catch (e) {
-      console.error("Load orders error", e);
-      setOrders([]);
+    } catch (err) {
+      console.error("Load orders failed:", err);
     }
-  }
+  };
 
-  // load menu for a shop (public)
-  async function loadMenuForShop(shopId) {
+  const addItem = async () => {
+    if (!selectedShop || !itemName || !itemPrice) return alert("Enter item details");
     try {
-      const res = await apiFetch(`/api/shops/${shopId}/menu`);
-      if (!res.ok) {
-        setMenu([]);
-        return;
-      }
-      const data = await res.json();
-      setMenu(data);
-    } catch (e) {
-      console.error("Load menu error", e);
-      setMenu([]);
-    }
-  }
-
-  // add menu item (owner)
-  async function addItem() {
-    if (!selectedShop) return alert("Select a shop first");
-    if (!newItem.name || newItem.name.trim() === "") return alert("Item name required");
-    const payload = { name: newItem.name.trim(), price: Number(newItem.price || 0) };
-    try {
-      const res = await apiFetch(`/api/shops/${selectedShop._id}/items`, {
+      const res = await fetch(`${API_BASE}/api/shops/${selectedShop._id}/items`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ name: itemName, price: Number(itemPrice) }),
       });
-      if (!res.ok) {
-        const txt = await res.text();
-        alert("Add item failed: " + (txt || res.status));
-        return;
-      }
-      alert("Item added");
-      setNewItem({ name: "", price: "" });
-      await loadMenuForShop(selectedShop._id);
-    } catch (e) {
-      console.error(e);
-      alert("Network error while adding item");
+      if (!res.ok) throw new Error("Failed to add item");
+      setItemName("");
+      setItemPrice("");
+      loadMenu(selectedShop._id);
+    } catch (err) {
+      console.error("Add item error:", err);
+      alert("Failed to add item");
     }
-  }
+  };
 
-  // delete menu item
-  async function deleteItem(itemId) {
-    if (!selectedShop) return;
-    if (!confirm("Delete this item?")) return;
+  const deleteItem = async (itemId) => {
+    if (!window.confirm("Delete this item?")) return;
     try {
-      const res = await apiFetch(`/api/shops/${selectedShop._id}/items/${itemId}`, {
+      await fetch(`${API_BASE}/api/shops/${selectedShop._id}/items/${itemId}`, {
         method: "DELETE",
+        headers: { Authorization: `Bearer ${token}` },
       });
-      if (!res.ok) {
-        const txt = await res.text();
-        alert("Delete failed: " + (txt || res.status));
-        return;
-      }
-      await loadMenuForShop(selectedShop._id);
-    } catch (e) {
-      console.error(e);
-      alert("Network error while deleting item");
+      loadMenu(selectedShop._id);
+    } catch (err) {
+      console.error("Delete item failed:", err);
     }
-  }
+  };
 
-  // enable / disable toggle
-  async function toggleAvailable(item) {
-    if (!selectedShop) return;
+  const toggleAvailability = async (itemId, available) => {
     try {
-      const res = await apiFetch(`/api/shops/${selectedShop._id}/items/${item._id}`, {
+      await fetch(`${API_BASE}/api/shops/${selectedShop._id}/items/${itemId}`, {
         method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ available: !item.available }),
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ available: !available }),
       });
-      if (!res.ok) {
-        const txt = await res.text();
-        alert("Toggle failed: " + (txt || res.status));
-        return;
-      }
-      await loadMenuForShop(selectedShop._id);
-    } catch (e) {
-      console.error(e);
-      alert("Network error while toggling availability");
+      loadMenu(selectedShop._id);
+    } catch (err) {
+      console.error("Toggle availability failed:", err);
     }
-  }
+  };
 
-  // EDIT: prompt for new name/price and PATCH
-  async function editItem(item) {
-    if (!selectedShop) return;
+  const editItem = async (itemId, oldName, oldPrice) => {
+    const newName = prompt("Edit name:", oldName);
+    const newPrice = prompt("Edit price:", oldPrice);
+    if (!newName || !newPrice) return;
     try {
-      const newName = prompt("Edit item name:", item.name);
-      if (newName === null) return; // user cancelled
-      let newPriceStr = prompt("Edit item price (number):", String(item.price || 0));
-      if (newPriceStr === null) return;
-
-      const newPrice = Number(newPriceStr);
-      if (Number.isNaN(newPrice)) {
-        alert("Invalid price");
-        return;
-      }
-
-      const payload = { name: newName.trim(), price: newPrice };
-      const res = await apiFetch(`/api/shops/${selectedShop._id}/items/${item._id}`, {
+      await fetch(`${API_BASE}/api/shops/${selectedShop._id}/items/${itemId}`, {
         method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ name: newName, price: Number(newPrice) }),
       });
-      if (!res.ok) {
-        const txt = await res.text();
-        alert("Edit failed: " + (txt || res.status));
-        return;
-      }
-      alert("Item updated");
-      await loadMenuForShop(selectedShop._id);
-    } catch (e) {
-      console.error(e);
-      alert("Network error while editing item");
+      loadMenu(selectedShop._id);
+    } catch (err) {
+      console.error("Edit item failed:", err);
     }
-  }
-
-  // update order status from owner dashboard (convenience)
-  async function updateOrderStatus(oId, status) {
-    try {
-      const res = await apiFetch(`/api/orders/${oId}/status`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status }),
-      });
-      if (!res.ok) {
-        const txt = await res.text();
-        alert("Failed to update order: " + (txt || res.status));
-        return;
-      }
-      await loadOrdersForShop(selectedShop._id);
-    } catch (e) {
-      console.error(e);
-      alert("Network error while updating order");
-    }
-  }
+  };
 
   useEffect(() => {
-    const token = localStorage.getItem("merchant_token");
-    if (!token) {
-      navigate("/merchant-login");
-      return;
-    }
     loadMyShops();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // when shop changes load orders & menu
   useEffect(() => {
-    if (selectedShop && selectedShop._id) {
-      loadOrdersForShop(selectedShop._id);
-      loadMenuForShop(selectedShop._id);
-    } else {
-      setOrders([]);
-      setMenu([]);
+    if (selectedShop?._id) {
+      loadMenu(selectedShop._id);
+      loadOrders(selectedShop._id);
     }
   }, [selectedShop]);
 
   return (
-    <div className="min-h-screen p-6 bg-gray-50">
-      <div className="max-w-5xl mx-auto bg-white p-6 rounded shadow">
-        <div className="flex justify-between items-center mb-4">
-          <h2 className="text-xl font-semibold">Owner Dashboard</h2>
-          <div className="flex gap-2">
-            <button onClick={logout} className="px-3 py-1 bg-red-500 text-white rounded">Logout</button>
-          </div>
+    <div className="p-6 max-w-7xl mx-auto bg-white rounded-lg shadow">
+      <h2 className="text-2xl font-bold mb-4">Owner Dashboard</h2>
+
+      <div className="flex flex-col md:flex-row gap-6">
+        {/* Left Column - Shops */}
+        <div className="w-full md:w-1/3">
+          <h3 className="font-semibold mb-2">Your Shops</h3>
+          {shops.length === 0 && <p>Loading...</p>}
+          {shops.map((shop) => (
+            <div
+              key={shop._id}
+              onClick={() => setSelectedShop(shop)}
+              className={`border rounded p-3 mb-2 cursor-pointer ${
+                selectedShop?._id === shop._id ? "bg-blue-50 border-blue-400" : "hover:bg-gray-50"
+              }`}
+            >
+              <div className="font-medium">{shop.name}</div>
+              <div className="text-sm text-gray-500">{shop.phone}</div>
+            </div>
+          ))}
+
+          <h3 className="font-semibold mt-4">Add Item to Selected Shop</h3>
+          <input
+            placeholder="Item name"
+            value={itemName}
+            onChange={(e) => setItemName(e.target.value)}
+            className="border p-2 rounded w-full mb-2"
+          />
+          <input
+            placeholder="Price"
+            value={itemPrice}
+            onChange={(e) => setItemPrice(e.target.value)}
+            className="border p-2 rounded w-full mb-2"
+          />
+          <button
+            onClick={addItem}
+            className="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700"
+          >
+            Add Item
+          </button>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <div className="col-span-1">
-            <h3 className="font-medium mb-2">Your Shops</h3>
-            {loading ? <div>Loading...</div> :
-              shops.length === 0 ? <div>No shops</div> :
-              shops.map(s => (
-                <div
-                  key={s._id}
-                  className={`p-2 mb-2 border rounded cursor-pointer ${selectedShop && selectedShop._id === s._id ? "bg-blue-50" : ""}`}
-                  onClick={() => setSelectedShop(s)}
-                >
-                  <div className="font-medium">{s.name}</div>
-                  <div className="text-xs text-gray-500">{s.phone}</div>
-                </div>
-              ))
-            }
-
-            <div className="mt-4 border-t pt-3">
-              <h4 className="font-medium">Add Item to Selected Shop</h4>
-              <input value={newItem.name} onChange={e => setNewItem({ ...newItem, name: e.target.value })} placeholder="Item name" className="w-full p-2 border rounded my-2" />
-              <input value={newItem.price} onChange={e => setNewItem({ ...newItem, price: e.target.value })} placeholder="Price" type="number" className="w-full p-2 border rounded my-2" />
-              <button onClick={addItem} className="px-3 py-2 bg-green-600 text-white rounded">Add item</button>
-            </div>
-          </div>
-
-          <div className="col-span-2">
-            <h3 className="font-medium mb-2">Orders for {selectedShop ? selectedShop.name : "—"}</h3>
-            {orders.length === 0 ? <div>No orders</div> :
-              <div className="space-y-3">
-                {orders.map(o => (
-                  <div key={o._id} className="p-3 border rounded bg-white flex justify-between">
-                    <div>
-                      <div className="font-medium">{o.customerName} <span className="text-xs text-gray-500">• {o.phone}</span></div>
-                      <div className="text-sm text-gray-600">{o.items.map(i => `${i.name} x${i.qty}`).join(", ")}</div>
-                      <div className="text-sm text-gray-600">Total: ₹{o.total}</div>
-                    </div>
-                    <div className="flex flex-col items-end gap-2">
-                      <div className="text-sm">Status: <b>{o.status}</b></div>
-                      <div className="flex gap-2">
-                        <button onClick={() => updateOrderStatus(o._id, "accepted")} className="px-2 py-1 bg-blue-600 text-white rounded">Accept</button>
-                        <button onClick={() => updateOrderStatus(o._id, "packed")} className="px-2 py-1 bg-gray-200 rounded">Packed</button>
-                      </div>
-                    </div>
-                  </div>
-                ))}
+        {/* Right Column - Orders and Menu */}
+        <div className="w-full md:w-2/3">
+          <h3 className="font-semibold mb-2">
+            Orders for {selectedShop ? selectedShop.name : "—"}
+          </h3>
+          {orders.length === 0 && <p className="text-gray-500">No orders</p>}
+          {orders.map((order) => (
+            <div key={order._id} className="border rounded p-2 mb-2">
+              <div className="font-medium">
+                Order #{order._id.slice(-6)} — {order.status}
               </div>
-            }
-
-            <div className="mt-6">
-              <h3 className="font-medium mb-2">Menu for {selectedShop ? selectedShop.name : "—"}</h3>
-              {menu.length === 0 ? <div>No items</div> :
-                <div className="space-y-3">
-                  {menu.map(it => (
-                    <div key={it._id} className="p-3 border rounded bg-white flex justify-between items-center">
-                      <div>
-                        <div className="font-medium">{it.name} <span className="text-sm text-gray-600"> • ₹{it.price}</span></div>
-                        <div className="text-xs text-gray-400">id: {it.externalId || it._id}</div>
-                      </div>
-                      <div className="flex gap-2">
-                        <button onClick={() => toggleAvailable(it)} className={`px-3 py-1 rounded ${it.available ? "bg-red-500 text-white" : "bg-gray-200"}`}>
-                          {it.available ? "Disable" : "Enable"}
-                        </button>
-                        <button onClick={() => editItem(it)} className="px-3 py-1 bg-yellow-500 text-white rounded">Edit</button>
-                        <button onClick={() => deleteItem(it._id)} className="px-3 py-1 bg-gray-300 rounded">Delete</button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              }
+              <div className="text-sm text-gray-600">
+                {order.items.map((i) => `${i.name} x${i.qty}`).join(", ")}
+              </div>
             </div>
+          ))}
 
-          </div>
+          <h3 className="font-semibold mt-6">Menu for {selectedShop ? selectedShop.name : "—"}</h3>
+          {menu.length === 0 && <p className="text-gray-500">No items</p>}
+          {menu.map((item) => (
+            <div
+              key={item._id}
+              className="border rounded p-3 mb-2 flex justify-between items-center"
+            >
+              <div>
+                <div className="font-medium">
+                  {item.name} • ₹{item.price}
+                </div>
+                <div className="text-xs text-gray-500">id: {item.externalId}</div>
+              </div>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => toggleAvailability(item._id, item.available)}
+                  className="bg-red-500 text-white px-3 py-1 rounded"
+                >
+                  {item.available ? "Disable" : "Enable"}
+                </button>
+                <button
+                  onClick={() => editItem(item._id, item.name, item.price)}
+                  className="bg-yellow-500 text-white px-3 py-1 rounded"
+                >
+                  Edit
+                </button>
+                <button
+                  onClick={() => deleteItem(item._id)}
+                  className="bg-gray-400 text-white px-3 py-1 rounded"
+                >
+                  Delete
+                </button>
+              </div>
+            </div>
+          ))}
         </div>
       </div>
     </div>
