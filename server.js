@@ -403,7 +403,7 @@ app.get('/api/me/shops', async (req, res) => {
 });
 
 /* Create order (public via UI or webhook) */
-app.post('/api/orders', requireApiKeyOrJwt, async (req, res) => {
+app.post('/api/orders', async (req, res) => {
   try {
     const { shop: shopId, customerName, phone, items = [] } = req.body;
     if (!customerName || !phone) return res.status(400).json({ error: 'customerName and phone required' });
