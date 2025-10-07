@@ -36,22 +36,34 @@ export default function ShopManager() {
   const handleQtyChange = (itemId, value) => {
     setQtyMap((prev) => ({
       ...prev,
-      [itemId]: Math.max(1, Number(value) || 1),
+      [itemId]: Math.max(0, Number(value) || 0),
     }));
   };
 
-  const placeOrder = async (item) => {
-    if (!selectedShop) return alert("Please select a shop first");
+  // 🧾 Place one combined order for all items with qty > 0
+  const placeCombinedOrder = async () => {
+    if (!selectedShop) return alert("Select a shop first");
     if (!customerName || !customerPhone)
       return alert("Enter your name and phone before ordering");
 
-    const qty = qtyMap[item._id] || 1;
+    const selectedItems = menu
+      .filter((item) => qtyMap[item._id] && qtyMap[item._id] > 0)
+      .map((item) => ({
+        name: item.name,
+        qty: qtyMap[item._id],
+        price: item.price,
+      }));
+
+    if (selectedItems.length === 0) return alert("Select at least one item to order");
+
     const payload = {
       shop: selectedShop._id,
       customerName,
       phone: customerPhone,
-      items: [{ name: item.name, qty, price: item.price }],
+      items: selectedItems,
     };
+
+    const total = selectedItems.reduce((sum, i) => sum + i.price * i.qty, 0);
 
     try {
       const res = await fetch(`${API_BASE}/api/orders`, {
@@ -61,9 +73,7 @@ export default function ShopManager() {
       });
       if (!res.ok) throw new Error("Order failed");
       const data = await res.json();
-      alert(
-        `✅ Order placed!\n\nItem: ${item.name}\nQty: ${qty}\nTotal: ₹${item.price * qty}\n\nOrder ID: ${data._id}`
-      );
+      alert(`✅ Order placed!\nTotal ₹${total}\nOrder ID: ${data._id}`);
       setQtyMap({});
     } catch (err) {
       console.error("Order failed:", err);
@@ -149,23 +159,26 @@ export default function ShopManager() {
               <div className="flex gap-2 mt-2 sm:mt-0 sm:items-center">
                 <input
                   type="number"
-                  min="1"
-                  value={qtyMap[item._id] || 1}
+                  min="0"
+                  value={qtyMap[item._id] || ""}
                   onChange={(e) => handleQtyChange(item._id, e.target.value)}
-                  className="border p-1 w-16 text-center rounded"
+                  className="border p-1 w-20 text-center rounded"
+                  placeholder="Qty"
                 />
-                <button
-                  disabled={!item.available}
-                  onClick={() => placeOrder(item)}
-                  className={`px-3 py-1 rounded text-white ${
-                    item.available ? "bg-green-600 hover:bg-green-700" : "bg-gray-400 cursor-not-allowed"
-                  }`}
-                >
-                  Place Order
-                </button>
               </div>
             </div>
           ))}
+
+          {menu.length > 0 && (
+            <div className="mt-4 text-right">
+              <button
+                onClick={placeCombinedOrder}
+                className="bg-green-600 hover:bg-green-700 text-white px-5 py-2 rounded text-lg"
+              >
+                Place Order
+              </button>
+            </div>
+          )}
         </div>
       </div>
     </div>
