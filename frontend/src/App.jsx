@@ -18,6 +18,7 @@ export default function App() {
         <Link to="/merchant-signup" style={{ marginRight: 10 }}>✍️ Merchant Signup</Link>
         <Link to="/merchant-login" style={{ marginRight: 10 }}>🔐 Merchant Login</Link>
         <Link to="/owner-dashboard">👨‍🍳 Owner Dashboard</Link>
+        <Link to="/customer-login" style={{ marginRight: 10 }}>🔑 Customer Login</Link>
       </nav>
       <Routes>
         <Route path="/" element={<Dashboard />} />
