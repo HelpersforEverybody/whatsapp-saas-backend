@@ -13,7 +13,8 @@ export default function ShopManager() {
 
   // customer info (simple)
   const [customerName, setCustomerName] = useState("");
-  const [customerPhone, setCustomerPhone] = useState("");
+  // NOTE: we keep an internal "digitsOnlyPhone" (exactly up to 10 digits). On blur we convert to E.164 for submitting.
+  const [digitsOnlyPhone, setDigitsOnlyPhone] = useState("");
 
   // cart: { itemId: qty }
   const [cart, setCart] = useState({});
@@ -113,29 +114,48 @@ export default function ShopManager() {
     return { totalQty, totalPrice, items };
   }
 
-  // auto-prefix phone on blur: if 10 digits and no +, add +91
+  // phone input handling (frontend validation)
+  // The user types up to 10 digits. We only allow digits in this field.
+  function handlePhoneChange(e) {
+    const raw = e.target.value || "";
+    // strip non-digits
+    const digits = raw.replace(/\D/g, "");
+    // limit to 10 digits
+    const limited = digits.slice(0, 10);
+    setDigitsOnlyPhone(limited);
+  }
+
+  // On blur: if exactly 10 digits, keep them (we normalize during placeOrder to +91...).
+  // If fewer than 10, leave as-is (placeOrder will reject).
   function handlePhoneBlur() {
-    const v = (customerPhone || "").trim();
-    if (!v) return;
-    if (v.startsWith("+")) return;
-    // extract digits
-    const digits = v.replace(/\D/g, "");
-    if (digits.length === 10) {
-      setCustomerPhone("+91" + digits);
-    }
+    // no-op on blur for UI (we already restrict input). We validate on placeOrder.
+  }
+
+  // Build normalized phone for server: if digitsOnlyPhone has 10 digits -> +91XXXXXXXXXX
+  // If user accidentally typed full E.164 into digitsOnlyPhone (shouldn't happen), we handle.
+  function normalizedPhoneForSubmit() {
+    const d = (digitsOnlyPhone || "").replace(/\D/g, "");
+    if (d.length === 10) return `+91${d}`;
+    // fallback: try to detect if digitsOnlyPhone already has an international code (rare here)
+    return `+${d}`; // server will validate and may reject
   }
 
   async function placeOrder() {
     if (!selectedShop) return alert("Select a shop");
     const { items } = cartSummary();
     if (!items.length) return alert("Cart is empty");
-    if (!customerName || !customerPhone) return alert("Enter name and phone");
+    if (!customerName) return alert("Enter your name");
 
-    // build payload
+    // phone validation client-side: require exactly 10 digits (we will submit +91 prefix)
+    const digits = (digitsOnlyPhone || "").replace(/\D/g, "");
+    if (digits.length !== 10) {
+      return alert("Enter a valid 10-digit phone number (without +91). We will prefix +91 automatically.");
+    }
+
     const payload = {
       shop: selectedShop._id,
       customerName,
-      phone: customerPhone,
+      phone: normalizedPhoneForSubmit(),
       items: items.map(i => ({ name: i.name, qty: i.qty, price: i.price })),
     };
 
@@ -144,7 +164,7 @@ export default function ShopManager() {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "x-api-key": API_KEY // same API pattern as before
+          // intentionally do not send x-api-key or Authorization here — guests allowed
         },
         body: JSON.stringify(payload)
       });
@@ -153,8 +173,9 @@ export default function ShopManager() {
         throw new Error(txt || "Order failed");
       }
       const order = await res.json();
-      alert("Order placed: " + (order._id ? String(order._id).slice(0, 8) : "OK"));
+      alert("Order placed: " + (order.orderNumber ? `#${String(order.orderNumber).padStart(6, "0")}` : (order._id ? String(order._id).slice(0,8) : "OK")));
       setCart({});
+      // optionally clear customer info? keep as-is
     } catch (e) {
       console.error("Order failed", e);
       alert("Order failed: " + (e.message || e));
@@ -229,11 +250,14 @@ export default function ShopManager() {
               className="p-2 border rounded w-full"
             />
             <input
-              value={customerPhone}
-              onChange={(e) => setCustomerPhone(e.target.value)}
+              value={digitsOnlyPhone}
+              onChange={handlePhoneChange}
               onBlur={handlePhoneBlur}
-              placeholder="Your Phone (10 digits will auto-prefix +91 on blur)"
+              placeholder="Your Phone (10 digits — will auto-prefix +91 on submit)"
               className="p-2 border rounded w-full"
+              inputMode="numeric"
+              pattern="[0-9]*"
+              maxLength={10}
             />
           </div>
         </div>
