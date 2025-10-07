@@ -1,91 +1,115 @@
 // frontend/src/pages/OwnerDashboard.jsx
-import React, { useEffect, useState } from "react";
-import { getApiBase, apiFetch } from "../hooks/useApi";
+import React, { useEffect, useState, useCallback } from "react";
+import { apiFetch, getApiBase } from "../hooks/useApi";
 import { useNavigate } from "react-router-dom";
 
 export default function OwnerDashboard() {
   const API_BASE = getApiBase();
   const navigate = useNavigate();
+
   const [shops, setShops] = useState([]);
   const [selectedShop, setSelectedShop] = useState(null);
-
-  const [orders, setOrders] = useState([]);
   const [menu, setMenu] = useState([]);
-  const [loadingShops, setLoadingShops] = useState(false);
-  const [loadingMenu, setLoadingMenu] = useState(false);
-  const [loadingOrders, setLoadingOrders] = useState(false);
+  const [orders, setOrders] = useState([]);
+  const [loading, setLoading] = useState(false);
 
-  const [newItem, setNewItem] = useState({ name: "", price: "" });
-  const [editing, setEditing] = useState({}); // { [itemId]: { name, price, saving, error } }
+  const [newItem, setNewItem] = useState({ name: "", price: 0 });
 
-  // token guard and basic redirect
+  // to handle inline edits: track editing id -> {name, price}
+  const [editing, setEditing] = useState({});
+
+  function logout() {
+    localStorage.removeItem("merchant_token");
+    navigate("/merchant-login");
+  }
+
+  const loadMyShops = useCallback(async () => {
+    setLoading(true);
+    try {
+      // server: /api/me/shops (if available) is best, otherwise call /api/shops and filter
+      // We'll try /api/me/shops first
+      let res = await apiFetch("/api/me/shops");
+      if (!res.ok) {
+        // fallback: /api/shops (public) then filter by owner if owner id provided by JWT
+        const fallback = await apiFetch("/api/shops");
+        if (!fallback.ok) throw new Error("Failed to load shops");
+        const data = await fallback.json();
+        setShops(data);
+        if (data.length) setSelectedShop(data[0]);
+      } else {
+        const data = await res.json();
+        setShops(data);
+        if (data.length) setSelectedShop(data[0]);
+      }
+    } catch (e) {
+      console.error("Load shops error", e);
+      alert("Failed to load your shops (re-login if needed)");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  const loadMenuForShop = useCallback(async (shopId) => {
+    if (!shopId) return setMenu([]);
+    try {
+      // Owner should use owner-only endpoint if available, otherwise public menu
+      const res = await apiFetch(`/api/shops/${shopId}/menu`);
+      if (!res.ok) {
+        // fallback to public fetch without auth
+        const fallback = await fetch(`${API_BASE}/api/shops/${shopId}/menu`);
+        if (!fallback.ok) throw new Error("Failed to load menu");
+        const data = await fallback.json();
+        setMenu(data);
+        return;
+      }
+      const data = await res.json();
+      setMenu(data);
+    } catch (e) {
+      console.error("Load menu error", e);
+      setMenu([]);
+      // don't alert too often
+    }
+  }, [API_BASE]);
+
+  const loadOrdersForShop = useCallback(async (shopId) => {
+    if (!shopId) return setOrders([]);
+    try {
+      const res = await apiFetch(`/api/shops/${shopId}/orders`);
+      if (!res.ok) {
+        // show no orders or message
+        setOrders([]);
+        return;
+      }
+      const data = await res.json();
+      setOrders(data);
+    } catch (e) {
+      console.error("Load orders error", e);
+      setOrders([]);
+    }
+  }, []);
+
   useEffect(() => {
     const token = localStorage.getItem("merchant_token");
     if (!token) {
       navigate("/merchant-login");
+      return;
     }
-  }, [navigate]);
+    loadMyShops();
+  }, [loadMyShops, navigate]);
 
-  // load shops owned by merchant
-  async function loadShops() {
-    setLoadingShops(true);
-    try {
-      const res = await apiFetch("/api/me/shops");
-      if (!res.ok) {
-        throw new Error("Failed to load shops");
-      }
-      const data = await res.json();
-      setShops(data || []);
-      if (data && data.length && !selectedShop) setSelectedShop(data[0]);
-    } catch (e) {
-      console.error("Load shops error", e);
-      alert("Failed to load your shops.");
-    } finally {
-      setLoadingShops(false);
+  useEffect(() => {
+    if (selectedShop && selectedShop._id) {
+      loadMenuForShop(selectedShop._id);
+      loadOrdersForShop(selectedShop._id);
+    } else {
+      setMenu([]);
+      setOrders([]);
     }
-  }
+  }, [selectedShop, loadMenuForShop, loadOrdersForShop]);
 
-  // load menu for a shop (all items)
-  async function loadMenu(shopId) {
-    if (!shopId) return setMenu([]);
-    setLoadingMenu(true);
-    try {
-      // public endpoint returns items; but to edit we will send Authorization for owner routes
-      const res = await fetch(`${API_BASE}/api/shops/${shopId}/menu`, {
-        headers: { "Content-Type": "application/json" }
-      });
-      if (!res.ok) throw new Error("Failed to load menu");
-      const data = await res.json();
-      setMenu(data || []);
-    } catch (e) {
-      console.error("Load menu error", e);
-      alert("Failed to load menu for shop.");
-    } finally {
-      setLoadingMenu(false);
-    }
-  }
-
-  // load orders for selected shop (owner-only)
-  async function loadOrdersForShop(shopId) {
-    if (!shopId) return setOrders([]);
-    setLoadingOrders(true);
-    try {
-      const res = await apiFetch(`/api/shops/${shopId}/orders`);
-      if (!res.ok) throw new Error("Failed to load orders");
-      const data = await res.json();
-      setOrders(data || []);
-    } catch (e) {
-      console.error("Load orders for shop failed", e);
-      // show friendly message
-      // don't alert automatically — developer can inspect console
-    } finally {
-      setLoadingOrders(false);
-    }
-  }
-
-  // add new item
+  // Add new item
   async function addItem() {
-    if (!selectedShop) return alert("Select a shop first");
+    if (!selectedShop) return alert("Select a shop");
     if (!newItem.name) return alert("Item name required");
     try {
       const res = await apiFetch(`/api/shops/${selectedShop._id}/items`, {
@@ -95,217 +119,186 @@ export default function OwnerDashboard() {
       });
       if (!res.ok) {
         const txt = await res.text();
-        throw new Error(txt || "Add item failed");
+        throw new Error(txt || res.status);
       }
-      const item = await res.json();
-      setMenu(prev => [item, ...prev]);
-      setNewItem({ name: "", price: "" });
+      await loadMenuForShop(selectedShop._id);
+      setNewItem({ name: "", price: 0 });
     } catch (e) {
-      console.error("Add item failed", e);
-      alert("Add item failed: " + (e.message || e));
+      console.error("Save item error", e);
+      alert("Save item error");
     }
   }
 
-  // toggle availability: PATCH /api/shops/:shopId/items/:itemId  { available: !available }
+  // Delete item
+  async function deleteItem(item) {
+    if (!selectedShop) return;
+    if (!confirm(`Delete item "${item.name}"?`)) return;
+    try {
+      const res = await apiFetch(`/api/shops/${selectedShop._id}/items/${item._id}`, {
+        method: "DELETE"
+      });
+      if (!res.ok) {
+        const txt = await res.text();
+        throw new Error(txt || res.status);
+      }
+      await loadMenuForShop(selectedShop._id);
+    } catch (e) {
+      console.error("Delete item error", e);
+      alert("Delete failed");
+    }
+  }
+
+  // Toggle availability (Enable / Disable)
   async function toggleAvailability(item) {
     if (!selectedShop) return;
-    const itemId = item._id;
-    // optimistic UI update
-    setMenu(prev => prev.map(it => (it._id === itemId ? { ...it, _updating: true } : it)));
     try {
-      const res = await apiFetch(`/api/shops/${selectedShop._id}/items/${itemId}`, {
+      const res = await apiFetch(`/api/shops/${selectedShop._id}/items/${item._id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ available: !item.available })
       });
       if (!res.ok) {
         const txt = await res.text();
-        throw new Error(txt || `Failed to update item ${itemId}`);
+        throw new Error(txt || res.status);
       }
-      const updated = await res.json();
-      setMenu(prev => prev.map(it => (it._id === itemId ? { ...updated } : it)));
+      await loadMenuForShop(selectedShop._id);
     } catch (e) {
-      console.error("Toggle availability failed", e);
-      alert("Toggle failed: " + (e.message || e));
-      // revert optimistic flag
-      setMenu(prev => prev.map(it => (it._id === itemId ? { ...it, _updating: false } : it)));
+      console.error("Toggle error", e);
+      alert("Failed to toggle availability");
     }
   }
 
-  // start editing item inline
+  // Start editing (setup editing state)
   function startEdit(item) {
-    setEditing(prev => ({ ...prev, [item._id]: { name: item.name, price: String(item.price), saving: false, error: null } }));
+    setEditing((s) => ({ ...s, [item._id]: { name: item.name, price: item.price } }));
   }
-
-  // cancel editing
-  function cancelEdit(itemId) {
-    setEditing(prev => {
-      const next = { ...prev };
-      delete next[itemId];
-      return next;
+  // Cancel editing
+  function cancelEdit(item) {
+    setEditing((s) => {
+      const copy = { ...s };
+      delete copy[item._id];
+      return copy;
     });
   }
-
-  // save edited item
-  async function saveEdit(itemId) {
-    const ed = editing[itemId];
-    if (!ed) return;
-    setEditing(prev => ({ ...prev, [itemId]: { ...prev[itemId], saving: true, error: null } }));
+  // Save edited item inline
+  async function saveEdit(item) {
+    if (!selectedShop) return;
+    const e = editing[item._1d] || editing[item._id];
+    const payload = editing[item._id];
+    if (!payload) return;
     try {
-      const res = await apiFetch(`/api/shops/${selectedShop._id}/items/${itemId}`, {
+      const res = await apiFetch(`/api/shops/${selectedShop._id}/items/${item._id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: ed.name, price: Number(ed.price || 0) })
+        body: JSON.stringify({ name: payload.name, price: Number(payload.price || 0) })
       });
       if (!res.ok) {
         const txt = await res.text();
-        throw new Error(txt || "Save failed");
+        throw new Error(txt || res.status);
       }
-      const updated = await res.json();
-      setMenu(prev => prev.map(it => (it._id === itemId ? updated : it)));
-      cancelEdit(itemId);
+      cancelEdit(item);
+      await loadMenuForShop(selectedShop._id);
     } catch (e) {
-      console.error("Save edit failed", e);
-      setEditing(prev => ({ ...prev, [itemId]: { ...prev[itemId], saving: false, error: (e.message || "Failed") } }));
+      console.error("Save edit error", e);
+      alert("Failed to save changes");
     }
   }
-
-  // delete item
-  async function deleteItem(itemId) {
-    if (!selectedShop) return;
-    if (!confirm("Delete this item?")) return;
-    try {
-      const res = await apiFetch(`/api/shops/${selectedShop._id}/items/${itemId}`, {
-        method: "DELETE",
-      });
-      if (!res.ok) {
-        const txt = await res.text();
-        throw new Error(txt || "Delete failed");
-      }
-      setMenu(prev => prev.filter(it => it._id !== itemId));
-    } catch (e) {
-      console.error("Delete failed", e);
-      alert("Delete failed: " + (e.message || e));
-    }
-  }
-
-  // when selectedShop changes, reload menu & orders
-  useEffect(() => {
-    if (selectedShop && selectedShop._id) {
-      loadMenu(selectedShop._id);
-      loadOrdersForShop(selectedShop._id);
-    } else {
-      setMenu([]);
-      setOrders([]);
-    }
-  }, [selectedShop]);
-
-  // initial load of shops
-  useEffect(() => {
-    loadShops();
-  }, []);
 
   return (
     <div className="min-h-screen p-6 bg-gray-50">
       <div className="max-w-6xl mx-auto bg-white p-6 rounded shadow">
-        <div className="flex justify-between items-center mb-6">
+        <div className="flex justify-between items-center mb-4">
+          <h2 className="text-xl font-semibold">Owner Dashboard</h2>
           <div>
-            <h2 className="text-2xl font-semibold">Owner Dashboard</h2>
-            <div className="text-sm text-gray-600">Manage your shops, menu & orders</div>
-          </div>
-          <div>
-            <button onClick={() => { localStorage.removeItem("merchant_token"); navigate("/merchant-login"); }} className="px-3 py-1 bg-red-500 text-white rounded">Logout</button>
+            <button onClick={logout} className="px-3 py-1 bg-red-500 text-white rounded">Logout</button>
           </div>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-          <div className="col-span-1">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          <div>
             <h3 className="font-medium mb-2">Your Shops</h3>
-            {loadingShops ? <div>Loading...</div> :
-              shops.length === 0 ? <div>No shops found</div> :
-                shops.map(s => (
-                  <div key={s._id}
-                    className={`p-3 mb-2 border rounded cursor-pointer ${selectedShop && selectedShop._id===s._id ? "bg-blue-50" : ""}`}
-                    onClick={() => setSelectedShop(s)}>
-                    <div className="font-medium">{s.name}</div>
-                    <div className="text-xs text-gray-500">{s.phone}</div>
-                  </div>
-                ))
+            {loading ? <div>Loading...</div> : shops.length === 0 ? <div>No shops</div> :
+              shops.map(s => (
+                <div key={s._id}
+                     className={`p-3 mb-2 border rounded cursor-pointer ${selectedShop && selectedShop._id === s._id ? "bg-blue-50" : ""}`}
+                     onClick={() => setSelectedShop(s)}>
+                  <div className="font-medium">{s.name}</div>
+                  <div className="text-xs text-gray-500">{s.phone}</div>
+                </div>
+              ))
             }
 
             <div className="mt-4 border-t pt-3">
-              <h4 className="font-medium">Add Item to Selected Shop</h4>
-              <input value={newItem.name} onChange={e=>setNewItem({...newItem, name:e.target.value})} placeholder="Item name" className="w-full p-2 border rounded my-2"/>
-              <input value={newItem.price} onChange={e=>setNewItem({...newItem, price:e.target.value})} placeholder="Price" type="number" className="w-full p-2 border rounded my-2"/>
-              <button onClick={addItem} className="px-3 py-2 bg-green-600 text-white rounded w-full">Add item</button>
+              <h4 className="font-medium mb-2">Add Item to Selected Shop</h4>
+              <input value={newItem.name} onChange={e => setNewItem({ ...newItem, name: e.target.value })} placeholder="Item name" className="w-full p-2 border rounded my-2" />
+              <input value={newItem.price} onChange={e => setNewItem({ ...newItem, price: e.target.value })} placeholder="Price" type="number" className="w-full p-2 border rounded my-2" />
+              <button onClick={addItem} className="px-4 py-2 bg-green-600 text-white rounded">Add item</button>
             </div>
           </div>
 
           <div className="col-span-2">
-            <h3 className="font-medium mb-2">Menu — {selectedShop ? selectedShop.name : "—"}</h3>
+            <div className="mb-4 flex items-center justify-between">
+              <div>
+                <h3 className="font-medium">Orders for {selectedShop ? selectedShop.name : "—"}</h3>
+                {orders.length === 0 ? <div className="text-sm text-gray-500">No orders</div> :
+                  <div className="space-y-3">
+                    {orders.map(o => (
+                      <div key={o._id} className="p-3 border rounded bg-white">
+                        <div className="font-medium">Order #{String(o._id).slice(0,6)} — <span className="text-sm">{o.status}</span></div>
+                        <div className="text-sm">{o.items.map(i => `${i.name} x${i.qty}`).join(", ")}</div>
+                        <div className="text-sm font-semibold mt-1">₹{o.total}</div>
+                      </div>
+                    ))}
+                  </div>
+                }
+              </div>
+            </div>
 
-            {loadingMenu ? <div>Loading menu...</div> :
-              menu.length === 0 ? <div>No items</div> :
-                <div className="space-y-3">
-                  {menu.map(item => {
-                    const ed = editing[item._id];
-                    return (
-                      <div key={item._id} className="p-3 border rounded bg-white flex items-start justify-between gap-4">
-                        <div className="flex-1">
-                          {ed ? (
-                            <div>
-                              <input className="w-full p-2 border rounded mb-2" value={ed.name} onChange={e=>setEditing(prev=>({...prev,[item._id]:{...prev[item._id], name:e.target.value}}))} />
-                              <input className="w-full p-2 border rounded mb-2" type="number" value={ed.price} onChange={e=>setEditing(prev=>({...prev,[item._id]:{...prev[item._id], price:e.target.value}}))} />
-                              {ed.error && <div className="text-sm text-red-600 mb-1">{ed.error}</div>}
-                              <div className="flex gap-2">
-                                <button disabled={ed.saving} onClick={()=>saveEdit(item._id)} className="px-3 py-1 bg-blue-600 text-white rounded">{ed.saving ? "Saving..." : "Save"}</button>
-                                <button onClick={()=>cancelEdit(item._id)} className="px-3 py-1 border rounded">Cancel</button>
-                              </div>
-                            </div>
+            <h3 className="font-medium mb-3">Menu for {selectedShop ? selectedShop.name : "—"}</h3>
+            {menu.length === 0 ? <div>No items</div> :
+              <div className="space-y-3">
+                {menu.map(item => {
+                  const ed = editing[item._id];
+                  return (
+                    <div key={item._id} className="p-3 border rounded bg-white">
+                      <div className="flex justify-between items-center">
+                        <div>
+                          <div className="font-medium">{item.name} • ₹{item.price}</div>
+                          <div className="text-xs text-gray-500">id: {String(item.externalId || item._id).slice(0,20)}</div>
+                        </div>
+
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={() => toggleAvailability(item)}
+                            className={`px-3 py-1 rounded ${item.available ? "bg-green-600 text-white" : "bg-gray-300 text-gray-700"}`}>
+                            {item.available ? "Enabled" : "Disabled"}
+                          </button>
+
+                          {!ed ? (
+                            <>
+                              <button onClick={() => startEdit(item)} className="px-3 py-1 bg-yellow-400 rounded">Edit</button>
+                              <button onClick={() => deleteItem(item)} className="px-3 py-1 bg-gray-300 rounded">Delete</button>
+                            </>
                           ) : (
-                            <div>
-                              <div className="font-medium">{item.name} <span className="text-xs text-gray-500">• ₹{item.price}</span></div>
-                              <div className="text-xs text-gray-400">ID: {item.externalId}</div>
-                            </div>
+                            <>
+                              <button onClick={() => saveEdit(item)} className="px-3 py-1 bg-blue-600 text-white rounded">Save</button>
+                              <button onClick={() => cancelEdit(item)} className="px-3 py-1 bg-gray-200 rounded">Cancel</button>
+                            </>
                           )}
                         </div>
-
-                        <div className="flex flex-col items-end gap-2">
-                          <div>
-                            <button
-                              onClick={() => toggleAvailability(item)}
-                              disabled={!!item._updating}
-                              className={`px-3 py-1 rounded ${item.available ? "bg-green-600 text-white" : "bg-gray-200 text-gray-700"}`}>
-                              {item._updating ? "Updating..." : (item.available ? "Enabled" : "Disabled")}
-                            </button>
-                          </div>
-
-                          <div className="flex gap-2">
-                            {!ed && <button onClick={()=>startEdit(item)} className="px-3 py-1 border rounded">Edit</button>}
-                            <button onClick={()=>deleteItem(item._id)} className="px-3 py-1 border rounded text-red-600">Delete</button>
-                          </div>
-                        </div>
                       </div>
-                    );
-                  })}
-                </div>
-            }
-          </div>
 
-          <div className="col-span-1">
-            <h3 className="font-medium mb-2">Orders</h3>
-            {loadingOrders ? <div>Loading orders...</div> :
-              orders.length === 0 ? <div>No orders</div> :
-                <div className="space-y-3">
-                  {orders.map(o => (
-                    <div key={o._id} className="p-2 border rounded bg-white">
-                      <div className="font-medium">{o.customerName}</div>
-                      <div className="text-xs text-gray-500">{o.phone}</div>
-                      <div className="text-sm">{o.items.map(i=>`${i.name} x${i.qty}`).join(", ")}</div>
-                      <div className="text-sm font-semibold">₹{o.total} • {o.status}</div>
+                      {/* inline edit row */}
+                      {ed && (
+                        <div className="mt-3 grid grid-cols-1 md:grid-cols-3 gap-2">
+                          <input className="p-2 border rounded col-span-2" value={ed.name} onChange={ev => setEditing(s => ({ ...s, [item._id]: { ...s[item._id], name: ev.target.value } }))} />
+                          <input className="p-2 border rounded" type="number" value={ed.price} onChange={ev => setEditing(s => ({ ...s, [item._id]: { ...s[item._id], price: ev.target.value } }))} />
+                        </div>
+                      )}
                     </div>
-                  ))}
-                </div>
+                  );
+                })}
+              </div>
             }
           </div>
         </div>
