@@ -1,217 +1,189 @@
-// frontend/src/pages/ShopManager.jsx
-import React, { useState, useEffect } from "react";
-import EditItemModal from "../components/EditItemModal";
-import ConfirmDialog from "../components/ConfirmDialog";
+// frontend/src/pages/ShopsAndMenu.jsx
+import React, { useEffect, useState } from "react";
+import { getApiBase } from "../hooks/useApi";
 
-const API_BASE = import.meta.env.VITE_API_BASE || "https://whatsapp-saas-backend-f9ot.onrender.com";
-const API_KEY = import.meta.env.VITE_API_KEY || localStorage.getItem("admin_api_key") || "";
-
-export default function ShopManager() {
+export default function ShopsAndMenu() {
+  const API_BASE = getApiBase();
   const [shops, setShops] = useState([]);
   const [selectedShop, setSelectedShop] = useState(null);
   const [menu, setMenu] = useState([]);
+  const [cart, setCart] = useState({});
+  const [customer, setCustomer] = useState({ name: "", phone: "" });
   const [loading, setLoading] = useState(false);
 
-  const [editOpen, setEditOpen] = useState(false);
-  const [editItem, setEditItem] = useState(null);
-
-  const [confirmOpen, setConfirmOpen] = useState(false);
-  const [pendingDelete, setPendingDelete] = useState(null);
-
-  const [toast, setToast] = useState(null);
-  function showToast(msg, ms = 2500) {
-    setToast(msg);
-    setTimeout(() => setToast(null), ms);
-  }
-
-  // load shops
-  async function loadShops() {
-    try {
-      const res = await fetch(`${API_BASE}/api/shops`);
-      if (!res.ok) throw new Error("Failed to load shops");
-      setShops(await res.json());
-    } catch (e) {
-      console.error("Load shops error", e);
-      showToast("Failed to load shops");
-    }
-  }
-
+  // Load all shops
   useEffect(() => {
-    loadShops();
-  }, []);
-
-  // auto-open if ?open=<shopId> present in URL
-  useEffect(() => {
-    try {
-      const params = new URLSearchParams(window.location.search);
-      const openId = params.get("open");
-      if (openId) {
-        // Give shops a short time to load (if loading from network)
-        setTimeout(() => {
-          loadMenu(openId);
-        }, 250);
+    (async () => {
+      try {
+        const res = await fetch(`${API_BASE}/api/shops`);
+        const data = await res.json();
+        setShops(data);
+      } catch (err) {
+        console.error(err);
+        alert("Failed to load shops");
       }
-    } catch (e) {
-      // ignore
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    })();
   }, []);
 
-  // load menu for shopId
-  async function loadMenu(shopId) {
+  // Load menu for selected shop
+  async function loadMenu(shop) {
+    setSelectedShop(shop);
+    try {
+      const res = await fetch(`${API_BASE}/api/shops/${shop._id}/menu`);
+      const data = await res.json();
+      setMenu(data);
+      setCart({});
+    } catch (err) {
+      console.error(err);
+      alert("Failed to load menu");
+    }
+  }
+
+  // Update quantity in cart
+  function updateQty(itemId, change) {
+    setCart((prev) => {
+      const next = { ...prev };
+      next[itemId] = Math.max(0, (next[itemId] || 0) + change);
+      return next;
+    });
+  }
+
+  // Place order
+  async function placeOrder() {
+    if (!selectedShop) return alert("Select a shop first");
+    const items = menu
+      .filter((m) => cart[m._id] > 0)
+      .map((m) => ({
+        name: m.name,
+        qty: cart[m._id],
+        price: m.price,
+      }));
+    if (!items.length) return alert("Please add at least one item");
+    if (!customer.name || !customer.phone)
+      return alert("Enter your name and phone");
+
     setLoading(true);
     try {
-      const res = await fetch(`${API_BASE}/api/shops/${shopId}/menu`);
-      if (!res.ok) throw new Error("Failed to load menu");
-      const items = await res.json();
-      setMenu(items);
-      setSelectedShop(shopId);
-    } catch (e) {
-      console.error("Load menu error", e);
-      showToast("Failed to load menu");
+      const res = await fetch(`${API_BASE}/api/orders`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          shopId: selectedShop._id,
+          items,
+          customerName: customer.name,
+          phone: customer.phone,
+        }),
+      });
+      if (!res.ok) {
+        const txt = await res.text();
+        throw new Error(txt);
+      }
+      alert("✅ Order placed successfully!");
+      // Clear cart and customer info (Option 1 behavior)
+      setCart({});
+      setCustomer({ name: "", phone: "" });
+    } catch (err) {
+      console.error(err);
+      alert("Failed to place order");
     } finally {
       setLoading(false);
     }
   }
 
-  // open add item (with shop selected)
-  function openAdd() {
-    if (!selectedShop) return showToast("Select a shop first (View Menu).");
-    setEditItem(null);
-    setEditOpen(true);
-  }
-
-  // open edit
-  function openEdit(item) {
-    setEditItem(item);
-    setEditOpen(true);
-  }
-
-  // after saved (add or edit)
-  function onSavedItem(saved) {
-    // refresh menu
-    if (selectedShop) {
-      loadMenu(selectedShop);
-      showToast("Item saved");
-    }
-  }
-
-  // delete flow
-  function askDelete(item) {
-    setPendingDelete(item);
-    setConfirmOpen(true);
-  }
-
-  async function doDeleteConfirmed() {
-    if (!pendingDelete || !selectedShop) return;
-    const item = pendingDelete;
-    setConfirmOpen(false);
-    try {
-      const res = await fetch(`${API_BASE}/api/shops/${selectedShop}/items/${item._id}`, {
-        method: "DELETE",
-        headers: { "x-api-key": API_KEY }
-      });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      // refresh
-      await loadMenu(selectedShop);
-      setPendingDelete(null);
-      showToast("Item deleted");
-    } catch (e) {
-      console.error("Delete item error", e);
-      showToast("Failed to delete item");
-    }
-  }
-
   return (
-    <div className="max-w-5xl mx-auto p-4">
-      <div className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl font-semibold">🛍 Shops & Menu Manager</h1>
-      </div>
+    <div className="min-h-screen bg-gray-50 p-6">
+      <div className="max-w-4xl mx-auto bg-white p-6 rounded shadow">
+        <h2 className="text-xl font-semibold mb-4">🛍 Shops & Menu</h2>
 
-      <section className="mb-6">
-        <h3 className="text-lg font-medium mb-3">Existing Shops</h3>
-        <div className="space-y-3">
-          {shops.length === 0 ? (
-            <div className="text-sm text-gray-500">No shops yet</div>
-          ) : (
-            shops.map((s) => (
-              <div key={s._id} className="flex items-center justify-between p-3 bg-white rounded-lg shadow-sm border">
-                <div>
-                  <div className="font-semibold">{s.name}</div>
-                  <div className="text-sm text-gray-500">{s.phone}</div>
-                </div>
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => loadMenu(s._id)}
-                    className="px-3 py-1 rounded-md border bg-white text-gray-700 hover:bg-gray-50"
-                  >
-                    View Menu
-                  </button>
-                </div>
-              </div>
-            ))
-          )}
-        </div>
-      </section>
-
-      {selectedShop && (
-        <section className="bg-white p-4 rounded-lg shadow-sm border">
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="text-lg font-medium">Menu for shop</h3>
-            <div className="flex items-center gap-2">
-              <button onClick={() => loadMenu(selectedShop)} className="px-3 py-1 rounded-md bg-gray-100">Refresh</button>
-              <button onClick={openAdd} className="px-3 py-1 rounded-md bg-green-600 text-white">Add item</button>
+        {/* Shop List */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+          {shops.map((s) => (
+            <div
+              key={s._id}
+              onClick={() => loadMenu(s)}
+              className={`p-3 border rounded cursor-pointer ${
+                selectedShop && selectedShop._id === s._id
+                  ? "bg-blue-50 border-blue-400"
+                  : "hover:bg-gray-50"
+              }`}
+            >
+              <div className="font-medium">{s.name}</div>
+              <div className="text-sm text-gray-500">{s.phone}</div>
             </div>
-          </div>
+          ))}
+        </div>
 
-          <div>
-            {loading ? (
-              <div className="text-sm text-gray-500">Loading...</div>
-            ) : menu.length === 0 ? (
-              <div className="text-sm text-gray-500">No items yet</div>
-            ) : (
-              <div className="space-y-3">
-                {menu.map(it => (
-                  <div key={it._id} className="flex items-center justify-between p-3 rounded-md border bg-white">
+        {/* Menu Section */}
+        {selectedShop && (
+          <>
+            <h3 className="font-semibold text-lg mb-2">
+              Menu for {selectedShop.name}
+            </h3>
+            <div className="space-y-3 mb-6">
+              {menu.length === 0 ? (
+                <div>No items found.</div>
+              ) : (
+                menu.map((m) => (
+                  <div
+                    key={m._id}
+                    className="flex justify-between items-center border p-3 rounded"
+                  >
                     <div>
-                      <div className="font-semibold">{it.name} <span className="text-xs text-gray-400">({it.externalId || "—"})</span></div>
-                      <div className="text-sm text-gray-600">₹{it.price} • {it.available ? "Available" : "Unavailable"}</div>
+                      <div className="font-medium">{m.name}</div>
+                      <div className="text-sm text-gray-600">
+                        ₹{m.price} • id: {m.externalId}
+                      </div>
                     </div>
                     <div className="flex items-center gap-2">
-                      <button onClick={() => openEdit(it)} className="px-3 py-1 rounded-md border hover:bg-gray-50">Edit</button>
-                      <button onClick={() => askDelete(it)} className="px-3 py-1 rounded-md bg-red-600 text-white">Delete</button>
+                      <button
+                        className="px-2 py-1 border rounded"
+                        onClick={() => updateQty(m._id, -1)}
+                      >
+                        -
+                      </button>
+                      <span>{cart[m._id] || 0}</span>
+                      <button
+                        className="px-2 py-1 border rounded"
+                        onClick={() => updateQty(m._id, 1)}
+                      >
+                        +
+                      </button>
                     </div>
                   </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </section>
-      )}
+                ))
+              )}
+            </div>
 
-      <EditItemModal
-        open={editOpen}
-        onClose={() => setEditOpen(false)}
-        onSaved={onSavedItem}
-        shopId={selectedShop}
-        item={editItem}
-        apiBase={API_BASE}
-        apiKey={API_KEY}
-      />
-
-      <ConfirmDialog
-        open={confirmOpen}
-        title="Delete menu item"
-        message={pendingDelete ? `Delete ${pendingDelete.name}? This cannot be undone.` : ""}
-        onCancel={() => setConfirmOpen(false)}
-        onConfirm={doDeleteConfirmed}
-      />
-
-      {toast && (
-        <div className="fixed right-4 bottom-4 bg-blue-600 text-white px-4 py-2 rounded-md shadow">
-          {toast}
-        </div>
-      )}
+            {/* Customer Info + Place Order */}
+            <div className="border-t pt-4">
+              <h4 className="font-semibold mb-2">Customer Details</h4>
+              <input
+                placeholder="Your Name"
+                value={customer.name}
+                onChange={(e) =>
+                  setCustomer({ ...customer, name: e.target.value })
+                }
+                className="w-full border p-2 rounded mb-2"
+              />
+              <input
+                placeholder="Phone (+91...)"
+                value={customer.phone}
+                onChange={(e) =>
+                  setCustomer({ ...customer, phone: e.target.value })
+                }
+                className="w-full border p-2 rounded mb-3"
+              />
+              <button
+                disabled={loading}
+                onClick={placeOrder}
+                className="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700"
+              >
+                {loading ? "Placing..." : "Place Order"}
+              </button>
+            </div>
+          </>
+        )}
+      </div>
     </div>
   );
 }
