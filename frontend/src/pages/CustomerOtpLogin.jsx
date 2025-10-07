@@ -14,13 +14,10 @@ export default function CustomerOtpLogin() {
   const [statusMsg, setStatusMsg] = useState("");
   const [loading, setLoading] = useState(false);
 
-  // ensure phone shows +91 prefix visually but keep digits
   function formatPhoneDisplay(v) {
     if (!v) return "";
-    // remove non-digit except leading +
-    const raw = v.replace(/[^\d+]/g, "");
+    const raw = String(v).replace(/[^\d+]/g, "");
     if (raw.startsWith("+")) return raw;
-    // if 10 digits, auto prefix +91
     const digits = raw.replace(/\D/g, "");
     if (digits.length === 10) return `+91${digits}`;
     return raw;
@@ -28,7 +25,6 @@ export default function CustomerOtpLogin() {
 
   function validatePhone(v) {
     const z = v.replace(/[^\d]/g, "");
-    // accept exactly 10 digits (no country code entered) or +91XXXXXXXXXX or full international
     if (/^\+91\d{10}$/.test(v) || /^\d{10}$/.test(z)) return true;
     return false;
   }
@@ -56,7 +52,7 @@ export default function CustomerOtpLogin() {
         return;
       }
       setOtpSent(true);
-      setStatusMsg("OTP sent — check server logs for test OTP in dev.");
+      setStatusMsg("OTP sent — check server logs for the test OTP in dev.");
     } catch (err) {
       console.error(err);
       setStatusMsg("Network error sending OTP");
@@ -86,10 +82,9 @@ export default function CustomerOtpLogin() {
         setLoading(false);
         return;
       }
-      // store token and redirect to shops page
       localStorage.setItem("customer_token", data.token);
       setStatusMsg("Login successful");
-      navigate("/shops"); // or wherever customers go
+      navigate("/shops");
     } catch (err) {
       console.error(err);
       setStatusMsg("Network error verifying OTP");
@@ -142,7 +137,7 @@ export default function CustomerOtpLogin() {
           )}
 
           {statusMsg ? <div className="text-sm text-gray-700 mt-2">{statusMsg}</div> : null}
-          <div className="text-xs text-gray-400 mt-2">Note: SMS sending is simulated — OTP logged in server console (dev only).</div>
+          <div className="text-xs text-gray-400 mt-2">Note: OTP sending is simulated — OTP logged in server console (dev only).</div>
         </form>
       </div>
     </div>
