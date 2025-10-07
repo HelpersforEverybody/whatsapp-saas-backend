@@ -341,8 +341,31 @@ app.get('/api/shops/:shopId/menu', async (req, res) => {
 app.post('/api/orders', async (req, res) => {
   try {
     // Accept guest orders (no auth required)
-    const { shop: shopId, customerName, phone, items = [] } = req.body;
-    if (!customerName || !phone) return res.status(400).json({ error: 'customerName and phone required' });
+    const { shop: shopId, customerName, phone: rawPhone, items = [] } = req.body;
+    if (!customerName || !rawPhone) return res.status(400).json({ error: 'customerName and phone required' });
+
+    // ---- Validate & normalize phone ----
+    // Accept:
+    // - 10 digit local numbers (e.g. "9876543210") -> normalize to "+91XXXXXXXXXX"
+    // - international numbers already in E.164 (starting with '+') or digits including country code (like "919876543210")
+    // Basic approach: remove non-digits, then decide:
+    const digits = String(rawPhone || "").replace(/\D/g, "");
+    let normalizedPhone = null;
+    if (digits.length === 10) {
+      // local Indian number: prefix +91
+      normalizedPhone = `+91${digits}`;
+    } else if (digits.length === 11 && digits.startsWith('0')) {
+      // leading zero e.g. 09876543210 -> strip leading 0, prefix +91
+      normalizedPhone = `+91${digits.slice(1)}`;
+    } else if (digits.length === 12 && digits.startsWith('91')) {
+      // already has country code without + (e.g. 919876543210)
+      normalizedPhone = `+${digits}`;
+    } else if (String(rawPhone || "").trim().startsWith('+') && digits.length >= 7) {
+      // user supplied E.164 (or similar) with +: accept as +<digits>
+      normalizedPhone = `+${digits}`;
+    } else {
+      return res.status(400).json({ error: 'invalid phone format; provide 10 digit local phone or full international number' });
+    }
 
     // compute total
     const total = items.reduce((s, it) => s + Number(it.price || 0) * Number(it.qty || 0), 0);
@@ -364,7 +387,7 @@ app.post('/api/orders', async (req, res) => {
       shop: shopId || null,
       orderNumber,
       customerName,
-      phone,
+      phone: normalizedPhone,
       items,
       total,
       status: 'received',
@@ -372,7 +395,7 @@ app.post('/api/orders', async (req, res) => {
     const order = await Order.create(orderPayload);
 
     // notify shop owner via Twilio (non-blocking)
-    sendWhatsAppMessageSafe(phone, `Hi ${customerName}, we received your order ${order._id}. Total: ₹${total}`).catch(() => {});
+    sendWhatsAppMessageSafe(normalizedPhone, `Hi ${customerName}, we received your order ${order.orderNumber ? `#${String(order.orderNumber).padStart(6,'0')}` : order._id}. Total: ₹${total}`).catch(() => {});
 
     // emit socket (use order._id)
     try {
@@ -438,7 +461,7 @@ app.patch('/api/orders/:id/status', requireApiKeyOrJwt, async (req, res) => {
     if (!order) return res.status(404).json({ error: 'not found' });
 
     // notify customer
-    sendWhatsAppMessageSafe(order.phone, `Order ${order._id} status updated: ${status}`).catch(() => {});
+    sendWhatsAppMessageSafe(order.phone, `Order ${order.orderNumber ? `#${String(order.orderNumber).padStart(6,'0')}` : order._id} status updated: ${status}`).catch(() => {});
 
     // emit socket update
     try {
