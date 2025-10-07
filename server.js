@@ -242,6 +242,90 @@ app.post('/auth/merchant-login', async (req, res) => {
     return res.status(500).json({ error: 'server error' });
   }
 });
+// ---------- START: Fake OTP login (test only) ----------
+/*
+ * Adds:
+ *  POST /auth/send-otp    { phone }
+ *  POST /auth/verify-otp  { phone, otp }
+ *
+ * Stores OTPs in-memory (Map) with expiry (5 minutes).
+ * On verify -> returns { token, userId } (JWT role: 'customer')
+ */
+
+const otpStore = new Map(); // phone -> { otp, expiresAt }
+
+// helper to generate 6-digit OTP
+function genOtp() {
+  return Math.floor(100000 + Math.random() * 900000).toString();
+}
+
+// POST /auth/send-otp
+app.post('/auth/send-otp', async (req, res) => {
+  try {
+    const { phone } = req.body || {};
+    if (!phone) return res.status(400).json({ error: 'phone required' });
+
+    // normalize phone (very basic): keep + and digits only
+    const normalized = String(phone).replace(/[^\d+]/g, '');
+    if (!/^\+?\d{10,15}$/.test(normalized)) {
+      return res.status(400).json({ error: 'invalid phone format' });
+    }
+
+    const otp = genOtp();
+    const expiresAt = Date.now() + 5 * 60 * 1000; // 5 minutes
+
+    otpStore.set(normalized, { otp, expiresAt });
+
+    // For testing: log OTP on server console (so you can read it in logs)
+    console.log(`[OTP] send-otp to ${normalized}: ${otp} (expires in 5m)`);
+
+    // TODO: replace with Twilio send when you have credentials.
+    // For now we pretend OTP was sent.
+    return res.json({ ok: true, message: 'OTP generated and (pretend) sent' });
+  } catch (e) {
+    console.error('send-otp error', e);
+    return res.status(500).json({ error: 'server error' });
+  }
+});
+
+// POST /auth/verify-otp
+app.post('/auth/verify-otp', async (req, res) => {
+  try {
+    const { phone, otp } = req.body || {};
+    if (!phone || !otp) return res.status(400).json({ error: 'phone and otp required' });
+
+    const normalized = String(phone).replace(/[^\d+]/g, '');
+    const rec = otpStore.get(normalized);
+
+    if (!rec) return res.status(400).json({ error: 'no otp found (request send-otp first)' });
+    if (Date.now() > rec.expiresAt) {
+      otpStore.delete(normalized);
+      return res.status(400).json({ error: 'otp expired' });
+    }
+    if (String(otp).trim() !== String(rec.otp)) {
+      return res.status(401).json({ error: 'invalid otp' });
+    }
+
+    // OTP ok: remove stored OTP
+    otpStore.delete(normalized);
+
+    if (!JWT_SECRET) return res.status(500).json({ error: 'server misconfigured: JWT_SECRET missing' });
+
+    // Create a lightweight "customer" token. userId is the phone string.
+    const token = jwt.sign({ role: 'customer', userId: normalized }, JWT_SECRET, { expiresIn: '7d' });
+
+    // Optionally create a lightweight "customer" record in DB if you want persistent customers:
+    // (Not required for tests; left commented out)
+    // let customer = await Customer.findOne({ phone: normalized });
+    // if (!customer) customer = await Customer.create({ phone: normalized, createdAt: Date.now() });
+
+    return res.json({ token, userId: normalized });
+  } catch (e) {
+    console.error('verify-otp error', e);
+    return res.status(500).json({ error: 'server error' });
+  }
+});
+// ---------- END: Fake OTP login ----------
 
 /* ------------- API routes ------------- */
 
