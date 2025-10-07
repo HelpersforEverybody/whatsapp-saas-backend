@@ -9,7 +9,7 @@ export default function OwnerDashboard() {
   const [orders, setOrders] = useState([]);
   const [itemName, setItemName] = useState("");
   const [itemPrice, setItemPrice] = useState("");
-  const token = localStorage.getItem("token");
+  const token = localStorage.getItem("merchant_token");
 
   // Load only shops owned by logged-in merchant
   const loadMyShops = async () => {
