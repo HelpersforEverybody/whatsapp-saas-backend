@@ -151,10 +151,9 @@ const menuItemSchema = new mongoose.Schema({
 });
 const MenuItem = mongoose.model('MenuItem', menuItemSchema);
 
-// Order
-// Order (replace existing orderSchema block)
+// ----- Order schema (DROP-IN REPLACEMENT) -----
 const orderSchema = new mongoose.Schema({
-  shop: { type: mongoose.Schema.Types.ObjectId, ref: 'Shop' },
+  shop: { type: mongoose.Schema.Types.ObjectId, ref: 'Shop', default: null },
   customerName: { type: String, required: true },
   phone: { type: String, required: true },
   items: [
@@ -165,11 +164,20 @@ const orderSchema = new mongoose.Schema({
     },
   ],
   total: { type: Number, default: 0 },
-  // NEW: numeric order number (6-digit)
+  // numeric 6-digit order number (unique per shop)
   orderNumber: { type: Number, required: true },
-  status: { type: String, default: 'received' }, // received, accepted, packed, out-for-delivery, delivered
+  status: { type: String, default: 'received' },
   createdAt: { type: Date, default: Date.now },
 });
+
+// Unique index to enforce orderNumber uniqueness within the same shop
+orderSchema.index({ shop: 1, orderNumber: 1 }, { unique: true });
+
+const Order = mongoose.model('Order', orderSchema);
+
+// Optional: ensure indexes are created (safe to call)
+Order.createIndexes().catch(err => console.error('Order index create error:', err));
+
 
 // Ensure uniqueness of orderNumber per shop
 orderSchema.index({ shop: 1, orderNumber: 1 }, { unique: true });
@@ -402,47 +410,59 @@ app.get('/api/me/shops', async (req, res) => {
   }
 });
 
-/* Create order (public via UI or webhook) */
+/* Create order (public — guest or authenticated) */
+/* Drop-in replacement: allows guest orders, still supports shop association and 6-digit per-shop orderNumber */
 app.post('/api/orders', async (req, res) => {
   try {
-    const { shop: shopId, customerName, phone, items = [] } = req.body;
-    if (!customerName || !phone) return res.status(400).json({ error: 'customerName and phone required' });
+    const { shop: shopId, customerName, phone, items = [] } = req.body || {};
 
-    const total = items.reduce((s, it) => s + Number(it.price || 0) * Number(it.qty || 0), 0);
-
-    // helper: produce random 6-digit number
-    function random6() {
-      return Math.floor(100000 + Math.random() * 900000);
+    // Basic validation
+    if (!customerName || !phone) {
+      return res.status(400).json({ error: 'customerName and phone required' });
+    }
+    if (!Array.isArray(items) || items.length === 0) {
+      return res.status(400).json({ error: 'items must be a non-empty array' });
     }
 
-    // attempt to create unique orderNumber (up to attempts)
-    const MAX_ATTEMPTS = 10;
+    // sanitize items and compute total
+    const sanitizedItems = items.map(it => ({
+      name: String(it.name || '').slice(0, 200),
+      qty: Math.max(1, parseInt(it.qty, 10) || 1),
+      price: Number(it.price || 0)
+    }));
+    const total = sanitizedItems.reduce((s, it) => s + (Number(it.price || 0) * Number(it.qty || 0)), 0);
+
+    // helper to generate 6-digit number
+    function random6() {
+      return Math.floor(100000 + Math.random() * 900000); // 100000..999999
+    }
+
+    // Attempt to create order with unique orderNumber per shop (retries on duplicate)
+    const MAX_ATTEMPTS = 12;
     let createdOrder = null;
     let lastErr = null;
 
     for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
       const orderNumber = random6();
       try {
-        // create directly — unique index will enforce no duplicate per shop
         createdOrder = await Order.create({
           shop: shopId || null,
-          customerName,
-          phone,
-          items,
+          customerName: String(customerName).slice(0, 200),
+          phone: String(phone).slice(0, 40),
+          items: sanitizedItems,
           total,
           orderNumber,
         });
-        // success => break
         lastErr = null;
-        break;
+        break; // success
       } catch (err) {
         lastErr = err;
-        // duplicate key error code from Mongo is 11000
+        // Duplicate key (11000) => collision, try again
         if (err && err.code === 11000) {
-          // collision — try again
           continue;
         } else {
-          // some other error — stop retrying
+          // other error — break and return server error
+          console.error('Order create error (non-duplicate):', err);
           break;
         }
       }
@@ -452,6 +472,17 @@ app.post('/api/orders', async (req, res) => {
       console.error('Failed to create order after retries:', lastErr);
       return res.status(500).json({ error: 'failed to create order' });
     }
+
+    // Non-blocking notification (same as before)
+    sendWhatsAppMessageSafe(phone, `Hi ${customerName}, we received your order ${String(createdOrder.orderNumber).padStart(6,'0')}. Total: ₹${total}`).catch(() => {});
+
+    // Return the created order (includes orderNumber)
+    return res.status(201).json(createdOrder);
+  } catch (err) {
+    console.error('Create order unexpected error:', err);
+    return res.status(500).json({ error: 'failed to create order' });
+  }
+});
 
     // Optional: send WhatsApp notification (non-blocking)
     sendWhatsAppMessageSafe(phone, `Hi ${customerName}, we received your order ${String(createdOrder.orderNumber).padStart(6,'0')}. Total: ₹${total}`).catch(()=>{});
