@@ -280,15 +280,24 @@ app.post('/auth/merchant-login', async (req, res) => {
 app.get('/status', (req, res) => res.json({ status: 'ok', time: new Date() }));
 
 /* Return shops owned by current merchant (requires merchant JWT) */
-app.get('/api/me/shops', requireOwner, async (req, res) => {
+// GET /api/me/shops
+// Returns shops owned by the currently authenticated merchant (requires Bearer JWT)
+app.get('/api/me/shops', async (req, res) => {
   try {
-    const shops = await Shop.find({ owner: req.merchantId }).select('-__v').lean();
-    res.json(shops);
+    const authHeader = (req.get('authorization') || '').toString().trim();
+    const decoded = verifyJwtToken(authHeader);
+    if (!decoded || decoded.role !== 'merchant') {
+      return res.status(401).json({ error: 'unauthorized' });
+    }
+    const userId = decoded.userId;
+    const shops = await Shop.find({ owner: userId }).select('-__v').lean();
+    return res.json(shops);
   } catch (err) {
-    console.error('Me shops error:', err);
-    res.status(500).json({ error: 'failed to load your shops' });
+    console.error('GET /api/me/shops error:', err);
+    return res.status(500).json({ error: 'server error' });
   }
 });
+
 
 /* Create Shop (owner creates) */
 app.post('/api/shops', requireOwner, async (req, res) => {
