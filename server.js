@@ -152,6 +152,7 @@ const menuItemSchema = new mongoose.Schema({
 const MenuItem = mongoose.model('MenuItem', menuItemSchema);
 
 // Order
+// Order (replace existing orderSchema block)
 const orderSchema = new mongoose.Schema({
   shop: { type: mongoose.Schema.Types.ObjectId, ref: 'Shop' },
   customerName: { type: String, required: true },
@@ -164,10 +165,17 @@ const orderSchema = new mongoose.Schema({
     },
   ],
   total: { type: Number, default: 0 },
+  // NEW: numeric order number (6-digit)
+  orderNumber: { type: Number, required: true },
   status: { type: String, default: 'received' }, // received, accepted, packed, out-for-delivery, delivered
   createdAt: { type: Date, default: Date.now },
 });
+
+// Ensure uniqueness of orderNumber per shop
+orderSchema.index({ shop: 1, orderNumber: 1 }, { unique: true });
+
 const Order = mongoose.model('Order', orderSchema);
+
 
 /* ----------------- Twilio (optional) ----------------- */
 let twClient = null;
@@ -394,40 +402,68 @@ app.get('/api/me/shops', async (req, res) => {
   }
 });
 
-/* ----------------- PUBLIC Create order (customers) ----------------- */
-/* This endpoint is intentionally public for customer ordering (no API key or token required). */
-app.post('/api/orders', async (req, res) => {
+/* Create order (public via UI or webhook) */
+app.post('/api/orders', requireApiKeyOrJwt, async (req, res) => {
   try {
     const { shop: shopId, customerName, phone, items = [] } = req.body;
     if (!customerName || !phone) return res.status(400).json({ error: 'customerName and phone required' });
 
-    // compute total
     const total = items.reduce((s, it) => s + Number(it.price || 0) * Number(it.qty || 0), 0);
 
-    const order = await Order.create({ shop: shopId || null, customerName, phone, items, total });
-
-    // send WhatsApp (non-blocking)
-    sendWhatsAppMessageSafe(phone, `Hi ${customerName}, we received your order ${order._id}. Total: ₹${total}`).catch(()=>{});
-
-    // emit to any connected merchant via socket
-    try {
-      const payload = {
-        orderId: order._id.toString(),
-        status: order.status,
-        at: new Date().toISOString(),
-        meta: { note: 'created via public order endpoint', shop: order.shop ? order.shop.toString() : null }
-      };
-      emitOrderUpdate(order._id.toString(), payload);
-    } catch (e) {
-      console.error('emit after create order error', e);
+    // helper: produce random 6-digit number
+    function random6() {
+      return Math.floor(100000 + Math.random() * 900000);
     }
 
-    res.status(201).json(order);
+    // attempt to create unique orderNumber (up to attempts)
+    const MAX_ATTEMPTS = 10;
+    let createdOrder = null;
+    let lastErr = null;
+
+    for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+      const orderNumber = random6();
+      try {
+        // create directly — unique index will enforce no duplicate per shop
+        createdOrder = await Order.create({
+          shop: shopId || null,
+          customerName,
+          phone,
+          items,
+          total,
+          orderNumber,
+        });
+        // success => break
+        lastErr = null;
+        break;
+      } catch (err) {
+        lastErr = err;
+        // duplicate key error code from Mongo is 11000
+        if (err && err.code === 11000) {
+          // collision — try again
+          continue;
+        } else {
+          // some other error — stop retrying
+          break;
+        }
+      }
+    }
+
+    if (!createdOrder) {
+      console.error('Failed to create order after retries:', lastErr);
+      return res.status(500).json({ error: 'failed to create order' });
+    }
+
+    // Optional: send WhatsApp notification (non-blocking)
+    sendWhatsAppMessageSafe(phone, `Hi ${customerName}, we received your order ${String(createdOrder.orderNumber).padStart(6,'0')}. Total: ₹${total}`).catch(()=>{});
+
+    // return created order (including numeric orderNumber)
+    res.status(201).json(createdOrder);
   } catch (err) {
     console.error('Create order error:', err);
     res.status(500).json({ error: 'failed to create order' });
   }
 });
+
 
 /* List orders (merchant/admin) */
 app.get('/api/orders', requireApiKeyOrJwt, async (req, res) => {
