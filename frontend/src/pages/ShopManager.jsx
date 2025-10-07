@@ -8,10 +8,12 @@ export default function ShopManager() {
   const [shops, setShops] = useState([]);
   const [selectedShop, setSelectedShop] = useState(null);
   const [menu, setMenu] = useState([]);
-  const [quantities, setQuantities] = useState({}); // itemId -> qty
-  const [cart, setCart] = useState({}); // itemId -> qty
+  const [quantities, setQuantities] = useState({});
+  const [cart, setCart] = useState({});
   const [loading, setLoading] = useState(false);
-  const [customer, setCustomer] = useState({ name: "", phone: "" });
+
+  // separate local phone (10 digits) — prefix +91 fixed
+  const [customer, setCustomer] = useState({ name: "", localPhone: "" });
 
   const loadShops = useCallback(async () => {
     setLoading(true);
@@ -38,7 +40,6 @@ export default function ShopManager() {
       }
       const data = await res.json();
       setMenu(data);
-      // seed quantities
       const q = {};
       data.forEach(it => { q[it._id] = 1; });
       setQuantities(q);
@@ -49,16 +50,20 @@ export default function ShopManager() {
     }
   }, [API_BASE]);
 
-  useEffect(() => {
-    loadShops();
-  }, [loadShops]);
+  useEffect(() => { loadShops(); }, [loadShops]);
 
-  useEffect(() => {
-    if (selectedShop && selectedShop._id) loadMenu(selectedShop._id);
-    else setMenu([]);
-  }, [selectedShop, loadMenu]);
+  useEffect(() => { if (selectedShop && selectedShop._id) loadMenu(selectedShop._id); else setMenu([]); }, [selectedShop, loadMenu]);
 
-  // Add item to the local cart (not placing order yet)
+  function onlyDigits(str) {
+    return (str || "").replace(/\D+/g, '');
+  }
+
+  // handle local phone input (only digits, max 10)
+  function handleLocalPhoneChange(val) {
+    const digits = onlyDigits(val).slice(0, 10);
+    setCustomer(c => ({ ...c, localPhone: digits }));
+  }
+
   function addToCart(item) {
     if (!item.available) return;
     const qty = Number(quantities[item._id] || 1);
@@ -67,10 +72,11 @@ export default function ShopManager() {
       copy[item._id] = (copy[item._id] || 0) + qty;
       return copy;
     });
+    // small UX feedback
+    // keep simple alert (you can replace with nicer UI later)
     alert(`${item.name} x${qty} added to cart`);
   }
 
-  // Remove item from cart
   function removeFromCart(itemId) {
     setCart(prev => {
       const copy = { ...prev };
@@ -86,27 +92,21 @@ export default function ShopManager() {
     }).filter(Boolean);
   }
 
-  // Place a single order for the selected shop with multiple items
   async function placeOrder() {
     if (!selectedShop) return alert("Select a shop");
-    if (!customer.name || !customer.phone) return alert("Enter your name and phone");
+    if (!customer.name) return alert("Enter your name");
+    if (!customer.localPhone || customer.localPhone.length !== 10) return alert("Enter a valid 10-digit phone number");
+    const phone = `+91${customer.localPhone}`;
     const items = cartItems().filter(it => {
       const m = menu.find(mm => String(mm._id) === String(it._id));
       return m && m.available;
     }).map(it => ({ name: it.name, qty: it.qty, price: it.price }));
 
-    if (!items.length) return alert("No available items in cart");
+    if (!items.length) return alert("No items in cart");
 
-    const payload = {
-      shop: selectedShop._id,
-      customerName: customer.name,
-      phone: customer.phone,
-      items
-    };
+    const payload = { shop: selectedShop._id, customerName: customer.name, phone, items };
 
     try {
-      // NOTE: If backend requires an API key for public orders, you must include it.
-      // If your backend accepts public orders, the following will work.
       const res = await fetch(`${API_BASE}/api/orders`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -118,7 +118,6 @@ export default function ShopManager() {
       }
       const data = await res.json();
       alert("Order placed: " + String(data._id).slice(0,6));
-      // clear cart for this shop
       setCart({});
     } catch (e) {
       console.error("Order failed:", e);
@@ -133,8 +132,19 @@ export default function ShopManager() {
 
         <div className="mb-4 p-4 border rounded bg-gray-50">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            <input className="p-2 border rounded" placeholder="Your Name" value={customer.name} onChange={e => setCustomer({...customer, name: e.target.value})} />
-            <input className="p-2 border rounded" placeholder="Your Phone (+91...)" value={customer.phone} onChange={e => setCustomer({...customer, phone: e.target.value})} />
+            <input className="p-2 border rounded" placeholder="Your Name"
+                   value={customer.name} onChange={e => setCustomer({...customer, name: e.target.value})} />
+            <div className="flex gap-2 items-center">
+              <span className="px-3 py-2 bg-gray-100 border rounded">+91</span>
+              <input
+                className="p-2 border rounded flex-1"
+                placeholder="10-digit phone"
+                value={customer.localPhone}
+                onChange={e => handleLocalPhoneChange(e.target.value)}
+                maxLength={10}
+                inputMode="numeric"
+              />
+            </div>
           </div>
         </div>
 
@@ -163,8 +173,7 @@ export default function ShopManager() {
 
                     <div className="flex items-center gap-3">
                       <input
-                        type="number"
-                        min="1"
+                        type="number" min="1"
                         value={quantities[item._id] || 1}
                         onChange={e => setQuantities(q => ({ ...q, [item._id]: Number(e.target.value) }))}
                         disabled={!item.available}
