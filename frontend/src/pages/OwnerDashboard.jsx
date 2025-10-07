@@ -18,22 +18,25 @@ export default function OwnerDashboard() {
     navigate("/merchant-login");
   }
 
-  async function loadMyShops() {
-    setLoading(true);
-    try {
-      const res = await apiFetch("/api/me/shops");
-      if (!res.ok) throw new Error("Failed to load your shops");
-      const data = await res.json();
-      setShops(data);
-      if (data.length && !selectedShop) setSelectedShop(data[0]);
-    } catch (e) {
-      console.error(e);
-      alert("Failed to load shops (re-login if needed)");
-      // optional: navigate("/merchant-login");
-    } finally {
-      setLoading(false);
+  async function loadShops() {
+  setLoading(true);
+  try {
+    const res = await apiFetch('/api/me/shops');
+    if (!res.ok) {
+      const t = await res.text();
+      throw new Error(`Failed to load shops: ${res.status} ${t}`);
     }
+    const data = await res.json();
+    setShops(data);
+    if (data.length) setSelectedShop(data[0]);
+  } catch (e) {
+    console.error('Load shops error', e);
+    alert('Failed to load your shops (re-login if needed)');
+  } finally {
+    setLoading(false);
   }
+}
+
 
   async function loadOrders(shopId) {
     try {
