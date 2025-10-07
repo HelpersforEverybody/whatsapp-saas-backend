@@ -4,14 +4,9 @@ import { apiFetch, getApiBase } from "../hooks/useApi";
 import { useNavigate } from "react-router-dom";
 
 /**
- * Owner Dashboard
- * - Shows only owner's shops (loaded via /api/me/shops)
- * - Shows orders for selected shop (owner-only endpoint /api/shops/:shopId/orders)
- * - Add item, edit, delete, toggle availability using owner endpoints
- *
- * Changes:
- *  - Inline edit UI for menu items (replaces prompt/alert).
- *  - Buttons & flows otherwise unchanged.
+ * Owner Dashboard (drop-in)
+ * - Same logic as before
+ * - If merchant has no shops, a small Create Shop form appears (owner can create one shop)
  */
 
 export default function OwnerDashboard() {
@@ -24,17 +19,15 @@ export default function OwnerDashboard() {
   const [newItem, setNewItem] = useState({ name: "", price: "" });
   const [loading, setLoading] = useState(false);
 
-  // inline edit state
-  const [editingItemId, setEditingItemId] = useState(null);
-  const [editValues, setEditValues] = useState({ name: "", price: "" });
-  const [editError, setEditError] = useState("");
+  // create shop form state (shown when no shops / or user wants to add)
+  const [createShopForm, setCreateShopForm] = useState({ name: "", phone: "", description: "", pincode: "" });
+  const [creatingShop, setCreatingShop] = useState(false);
 
   function logout() {
     localStorage.removeItem("merchant_token");
     navigate("/merchant-login");
   }
 
-  // helper: format order label (6-digit padded number when present)
   function displayOrderLabel(order) {
     if (order.orderNumber || order.orderNumber === 0) {
       return `Order #${String(order.orderNumber).padStart(6, "0")}`;
@@ -51,7 +44,7 @@ export default function OwnerDashboard() {
       }
       const data = await res.json();
       setShops(data);
-      if (data.length && !selectedShop) setSelectedShop(data[0]);
+      if (data.length && (!selectedShop || !selectedShop._id)) setSelectedShop(data[0]);
     } catch (e) {
       console.error("Failed to load shops", e);
       alert("Failed to load shops (re-login if needed)");
@@ -94,9 +87,7 @@ export default function OwnerDashboard() {
     }
   }
 
-  // optimistic status update helper
   async function updateOrderStatus(orderId, newStatus) {
-    // optimistic UI: update orders array locally first
     setOrders(prev => prev.map(o => (o._id === orderId ? { ...o, status: newStatus } : o)));
 
     try {
@@ -106,7 +97,6 @@ export default function OwnerDashboard() {
         body: JSON.stringify({ status: newStatus }),
       });
       if (!res.ok) {
-        // revert UI if server failed
         const txt = await res.text();
         throw new Error(txt || "Failed to update status");
       }
@@ -115,12 +105,10 @@ export default function OwnerDashboard() {
     } catch (e) {
       console.error("Update status error", e);
       alert("Failed to update status: " + (e.message || e));
-      // re-fetch orders to ensure state is correct
       if (selectedShop && selectedShop._id) loadOrdersForShop(selectedShop._id);
     }
   }
 
-  // cancel order but keep visible
   async function cancelOrder(orderId) {
     if (!confirm("Cancel this order?")) return;
     await updateOrderStatus(orderId, "cancelled");
@@ -188,42 +176,65 @@ export default function OwnerDashboard() {
     }
   }
 
-  // ---------- INLINE EDIT IMPLEMENTATION ----------
-  function startInlineEdit(item) {
-    setEditingItemId(item._id);
-    setEditValues({ name: item.name || "", price: item.price || 0 });
-    setEditError("");
-  }
-  function cancelInlineEdit() {
-    setEditingItemId(null);
-    setEditValues({ name: "", price: "" });
-    setEditError("");
-  }
-  async function saveInlineEdit(itemId) {
-    if (!selectedShop) return;
-    if (!editValues.name) {
-      setEditError("Name is required");
-      return;
-    }
+  async function editItem(item) {
+    const name = prompt("New name", item.name);
+    if (name === null) return;
+    const priceStr = prompt("New price", String(item.price || 0));
+    if (priceStr === null) return;
+    const price = Number(priceStr || 0);
     try {
-      const res = await apiFetch(`/api/shops/${selectedShop._id}/items/${itemId}`, {
+      const res = await apiFetch(`/api/shops/${selectedShop._id}/items/${item._id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: editValues.name, price: Number(editValues.price || 0) }),
+        body: JSON.stringify({ name, price }),
       });
       if (!res.ok) {
         const txt = await res.text();
-        setEditError(txt || `Failed: ${res.status}`);
+        alert("Edit failed: " + (txt || res.status));
         return;
       }
       await loadMenuForShop(selectedShop._id);
-      cancelInlineEdit();
     } catch (e) {
       console.error(e);
-      setEditError("Network error");
+      alert("Network error editing item");
     }
   }
-  // -------------------------------------------------
+
+  // New: create shop from dashboard (merchant already logged in)
+  async function createShopFromDashboard(e) {
+    e.preventDefault();
+    if (!createShopForm.name || !createShopForm.phone) return alert("Shop name and phone required");
+    setCreatingShop(true);
+    try {
+      const token = localStorage.getItem("merchant_token");
+      if (!token) {
+        alert("Session missing — login again");
+        navigate("/merchant-login");
+        return;
+      }
+      const res = await fetch(`${API_BASE}/api/shops`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify(createShopForm),
+      });
+      if (!res.ok) {
+        const txt = await res.text();
+        throw new Error(txt || "Failed to create shop");
+      }
+      const shop = await res.json();
+      alert("Shop created");
+      setCreateShopForm({ name: "", phone: "", description: "", pincode: "" });
+      await loadShops();
+    } catch (err) {
+      console.error("Create shop failed", err);
+      alert("Create shop failed: " + (err.message || err));
+    } finally {
+      setCreatingShop(false);
+    }
+  }
 
   useEffect(() => {
     const token = localStorage.getItem("merchant_token");
@@ -274,6 +285,24 @@ export default function OwnerDashboard() {
               <input value={newItem.price} onChange={e=>setNewItem({...newItem, price:e.target.value})} placeholder="Price" type="number" className="w-full p-2 border rounded my-2"/>
               <button onClick={addItem} className="px-3 py-2 bg-green-600 text-white rounded">Add item</button>
             </div>
+
+            {/* Show create-shop form when merchant has no shops */}
+            {shops.length === 0 && (
+              <div className="mt-6 border-t pt-3">
+                <h4 className="font-medium">Create your shop</h4>
+                <form onSubmit={createShopFromDashboard}>
+                  <input name="name" value={createShopForm.name} onChange={e=>setCreateShopForm({...createShopForm, name:e.target.value})} placeholder="Shop name" className="w-full p-2 border rounded my-2"/>
+                  <input name="phone" value={createShopForm.phone} onChange={e=>setCreateShopForm({...createShopForm, phone:e.target.value})} placeholder="Shop phone (10 digits or +91...)" className="w-full p-2 border rounded my-2"/>
+                  <input name="pincode" value={createShopForm.pincode} onChange={e=>setCreateShopForm({...createShopForm, pincode:e.target.value})} placeholder="Pincode (optional)" className="w-full p-2 border rounded my-2"/>
+                  <input name="description" value={createShopForm.description} onChange={e=>setCreateShopForm({...createShopForm, description:e.target.value})} placeholder="Short description (optional)" className="w-full p-2 border rounded my-2"/>
+                  <div className="flex gap-2">
+                    <button disabled={creatingShop} type="submit" className="px-3 py-2 bg-blue-600 text-white rounded">{creatingShop ? "Creating..." : "Create shop"}</button>
+                    <button type="button" onClick={()=>navigate("/shops-and-menu")} className="px-3 py-2 bg-gray-200 rounded">Go to Shops page</button>
+                  </div>
+                </form>
+              </div>
+            )}
+
           </div>
 
           <div className="col-span-2">
@@ -293,7 +322,6 @@ export default function OwnerDashboard() {
                       <div className="flex flex-col items-end gap-2">
                         <div className="text-sm">Customer: <b>{o.customerName}</b></div>
                         <div className="flex gap-2">
-                          {/* Accept only when received */}
                           <button
                             onClick={() => updateOrderStatus(o._id, "accepted")}
                             disabled={status !== "received"}
@@ -302,7 +330,6 @@ export default function OwnerDashboard() {
                             Accept
                           </button>
 
-                          {/* Packed only when accepted */}
                           <button
                             onClick={() => updateOrderStatus(o._id, "packed")}
                             disabled={status !== "accepted"}
@@ -311,7 +338,6 @@ export default function OwnerDashboard() {
                             Packed
                           </button>
 
-                          {/* Out for delivery only when packed */}
                           <button
                             onClick={() => updateOrderStatus(o._id, "out-for-delivery")}
                             disabled={status !== "packed"}
@@ -320,7 +346,6 @@ export default function OwnerDashboard() {
                             Out for delivery
                           </button>
 
-                          {/* Delivered only when out-for-delivery */}
                           <button
                             onClick={() => updateOrderStatus(o._id, "delivered")}
                             disabled={status !== "out-for-delivery"}
@@ -329,7 +354,6 @@ export default function OwnerDashboard() {
                             Delivered
                           </button>
 
-                          {/* Cancel always allowed unless already delivered/cancelled */}
                           <button
                             onClick={() => cancelOrder(o._id)}
                             disabled={status === "delivered" || status === "cancelled"}
@@ -351,45 +375,18 @@ export default function OwnerDashboard() {
             {menu.length === 0 ? <div>No items</div> :
               <div className="space-y-3">
                 {menu.map(it => (
-                  <div key={it._id} className="p-3 border rounded bg-white">
-                    <div className="flex justify-between items-start">
-                      <div>
-                        <div className="font-medium">{it.name} • ₹{it.price}</div>
-                        <div className="text-xs text-gray-500">ID: {it.externalId || it._id}</div>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <button onClick={()=>toggleAvailability(it)} className={`px-3 py-1 rounded ${it.available ? "bg-green-600 text-white" : "bg-gray-300 text-gray-700"}`}>
-                          {it.available ? "Enabled" : "Disabled"}
-                        </button>
-                        <button onClick={()=>startInlineEdit(it)} className="px-3 py-1 bg-yellow-400 rounded">Edit</button>
-                        <button onClick={()=>deleteItem(it)} className="px-3 py-1 bg-gray-300 rounded">Delete</button>
-                      </div>
+                  <div key={it._id} className="p-3 border rounded bg-white flex justify-between items-center">
+                    <div>
+                      <div className="font-medium">{it.name} • ₹{it.price}</div>
+                      <div className="text-xs text-gray-500">ID: {it.externalId || it._id}</div>
                     </div>
-
-                    {/* Inline editor area */}
-                    {editingItemId === it._id && (
-                      <div className="mt-3 border-t pt-3">
-                        <div className="text-sm text-gray-700 mb-2">Edit item</div>
-                        <input
-                          value={editValues.name}
-                          onChange={e=>setEditValues({...editValues, name:e.target.value})}
-                          placeholder="Name"
-                          className="w-full p-2 border rounded mb-2"
-                        />
-                        <input
-                          value={editValues.price}
-                          onChange={e=>setEditValues({...editValues, price:e.target.value})}
-                          placeholder="Price"
-                          type="number"
-                          className="w-full p-2 border rounded mb-2"
-                        />
-                        {editError && <div className="text-sm text-red-600 mb-2">{editError}</div>}
-                        <div className="flex gap-2">
-                          <button onClick={()=>saveInlineEdit(it._id)} className="px-3 py-1 bg-green-600 text-white rounded">Save</button>
-                          <button onClick={cancelInlineEdit} className="px-3 py-1 bg-gray-200 rounded">Cancel</button>
-                        </div>
-                      </div>
-                    )}
+                    <div className="flex gap-2">
+                      <button onClick={()=>toggleAvailability(it)} className={`px-3 py-1 rounded ${it.available ? "bg-green-600 text-white" : "bg-gray-300 text-gray-700"}`}>
+                        {it.available ? "Enabled" : "Disabled"}
+                      </button>
+                      <button onClick={()=>editItem(it)} className="px-3 py-1 bg-yellow-400 rounded">Edit</button>
+                      <button onClick={()=>deleteItem(it)} className="px-3 py-1 bg-gray-300 rounded">Delete</button>
+                    </div>
                   </div>
                 ))}
               </div>
