@@ -34,6 +34,30 @@ export default function MerchantSignup() {
     setShop(s => ({ ...s, [name]: value }));
   }
 
+  async function tryAutoLogin(email, password) {
+    try {
+      const res = await fetch(`${API_BASE}/auth/merchant-login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, password }),
+      });
+      if (!res.ok) {
+        const txt = await res.text();
+        throw new Error(txt || `status:${res.status}`);
+      }
+      const data = await res.json();
+      // server returns { token, userId } on merchant-login
+      if (data.token) {
+        localStorage.setItem("merchant_token", data.token);
+        return true;
+      }
+      return false;
+    } catch (err) {
+      console.error("Auto-login failed", err);
+      return false;
+    }
+  }
+
   async function submit(e) {
     e.preventDefault();
     if (!form.name || !form.email || !form.password) {
@@ -68,6 +92,7 @@ export default function MerchantSignup() {
         };
       }
 
+      // 1) Signup
       const res = await fetch(`${API_BASE}/auth/signup`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -81,8 +106,17 @@ export default function MerchantSignup() {
 
       const data = await res.json();
       // server returns { userId, shopId? }
-      alert("Signup successful. Please login.");
-      navigate("/merchant-login");
+
+      // 2) Try auto-login immediately using same email/password
+      const loggedIn = await tryAutoLogin(form.email, form.password);
+      if (loggedIn) {
+        // redirect to owner dashboard
+        navigate("/owner-dashboard");
+      } else {
+        // fallback: inform user and redirect to login page
+        alert("Signup successful, but auto-login failed — please login manually.");
+        navigate("/merchant-login");
+      }
     } catch (err) {
       console.error("Signup failed", err);
       alert("Signup failed: " + (err.message || err));
