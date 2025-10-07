@@ -23,6 +23,7 @@ export default function App() {
         <Route path="/merchant-signup" element={<MerchantSignup />} />
         <Route path="/merchant-login" element={<MerchantLogin />} />
         <Route path="/owner-dashboard" element={<OwnerDashboard />} />
+        <Route path="/customer-login" element={<CustomerOtpLogin />} />
       </Routes>
     </BrowserRouter>
   );
