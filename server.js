@@ -1,4 +1,4 @@
-// server.js — backend with per-shop numeric orderNumber, JWT, Socket.io, Twilio
+// server.js — backend with per-shop numeric orderNumber, JWT, Socket.io, Twilio, + pincode + fake OTP
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
@@ -63,15 +63,17 @@ userSchema.methods.verifyPassword = function (plain) {
 };
 const User = mongoose.models.User || mongoose.model('User', userSchema);
 
-// Shop - includes lastOrderNumber for per-shop numeric orders
+// Shop - includes lastOrderNumber for per-shop numeric orders and pincode
 const shopSchema = new mongoose.Schema({
   name: { type: String, required: true },
   phone: { type: String, required: true, unique: true },
   description: String,
   owner: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
-  lastOrderNumber: { type: Number, default: 0 }, // for per-shop incremental order numbers
+  lastOrderNumber: { type: Number, default: 0 }, // per-shop incremental order numbers
+  pincode: { type: String, default: '' }, // store postal pincode as string (e.g. "560001")
   createdAt: { type: Date, default: Date.now },
 });
+shopSchema.index({ pincode: 1 });
 const Shop = mongoose.models.Shop || mongoose.model('Shop', shopSchema);
 
 // MenuItem
@@ -99,7 +101,7 @@ const orderSchema = new mongoose.Schema({
     },
   ],
   total: { type: Number, default: 0 },
-  status: { type: String, default: 'received' }, // received, accepted, packed, out-for-delivery, delivered
+  status: { type: String, default: 'received' }, // received, accepted, packed, out-for-delivery, delivered, cancelled
   createdAt: { type: Date, default: Date.now },
 });
 const Order = mongoose.models.Order || mongoose.model('Order', orderSchema);
@@ -216,7 +218,13 @@ app.post('/auth/signup', async (req, res) => {
     const user = await User.create({ name, email: email.toLowerCase(), passwordHash: hash });
     let shop = null;
     if (createShop && createShop.name && createShop.phone) {
-      shop = await Shop.create({ name: createShop.name, phone: createShop.phone, description: createShop.description || '', owner: user._id });
+      shop = await Shop.create({ 
+        name: createShop.name, 
+        phone: createShop.phone, 
+        description: createShop.description || '', 
+        owner: user._id,
+        pincode: (createShop.pincode || '').toString()
+      });
     }
     return res.status(201).json({ userId: user._id, shopId: shop ? shop._id : null });
   } catch (e) {
@@ -242,6 +250,7 @@ app.post('/auth/merchant-login', async (req, res) => {
     return res.status(500).json({ error: 'server error' });
   }
 });
+
 // ---------- START: Fake OTP login (test only) ----------
 /*
  * Adds:
@@ -265,7 +274,7 @@ app.post('/auth/send-otp', async (req, res) => {
     const { phone } = req.body || {};
     if (!phone) return res.status(400).json({ error: 'phone required' });
 
-    // normalize phone (very basic): keep + and digits only
+    // normalize phone (basic): keep + and digits only
     const normalized = String(phone).replace(/[^\d+]/g, '');
     if (!/^\+?\d{10,15}$/.test(normalized)) {
       return res.status(400).json({ error: 'invalid phone format' });
@@ -314,11 +323,7 @@ app.post('/auth/verify-otp', async (req, res) => {
     // Create a lightweight "customer" token. userId is the phone string.
     const token = jwt.sign({ role: 'customer', userId: normalized }, JWT_SECRET, { expiresIn: '7d' });
 
-    // Optionally create a lightweight "customer" record in DB if you want persistent customers:
-    // (Not required for tests; left commented out)
-    // let customer = await Customer.findOne({ phone: normalized });
-    // if (!customer) customer = await Customer.create({ phone: normalized, createdAt: Date.now() });
-
+    // Optionally create a persistent Customer record if desired (omitted here).
     return res.json({ token, userId: normalized });
   } catch (e) {
     console.error('verify-otp error', e);
@@ -335,9 +340,9 @@ app.get('/status', (req, res) => res.json({ status: 'ok', time: new Date() }));
 // Create shop (owner-only)
 app.post('/api/shops', requireOwner, async (req, res) => {
   try {
-    const { name, phone, description } = req.body;
+    const { name, phone, description, pincode } = req.body;
     if (!name || !phone) return res.status(400).json({ error: 'name and phone required' });
-    const shop = await Shop.create({ name, phone, description, owner: req.merchantId });
+    const shop = await Shop.create({ name, phone, description, owner: req.merchantId, pincode: (pincode || '').toString() });
     res.status(201).json(shop);
   } catch (err) {
     console.error('Create shop error:', err);
@@ -345,10 +350,15 @@ app.post('/api/shops', requireOwner, async (req, res) => {
   }
 });
 
-// List all shops (public)
+// List all shops (public) - supports pincode filter
 app.get('/api/shops', async (req, res) => {
   try {
-    const shops = await Shop.find().select('-__v').lean();
+    const { pincode } = req.query;
+    let q = {};
+    if (pincode) {
+      q.pincode = String(pincode).trim();
+    }
+    const shops = await Shop.find(q).select('-__v').lean();
     res.json(shops);
   } catch (err) {
     console.error('List shops error:', err);
@@ -432,7 +442,6 @@ app.post('/api/orders', async (req, res) => {
     // Accept:
     // - 10 digit local numbers (e.g. "9876543210") -> normalize to "+91XXXXXXXXXX"
     // - international numbers already in E.164 (starting with '+') or digits including country code (like "919876543210")
-    // Basic approach: remove non-digits, then decide:
     const digits = String(rawPhone || "").replace(/\D/g, "");
     let normalizedPhone = null;
     if (digits.length === 10) {
@@ -478,7 +487,7 @@ app.post('/api/orders', async (req, res) => {
     };
     const order = await Order.create(orderPayload);
 
-    // notify shop owner via Twilio (non-blocking)
+    // notify customer via Twilio (non-blocking)
     sendWhatsAppMessageSafe(normalizedPhone, `Hi ${customerName}, we received your order ${order.orderNumber ? `#${String(order.orderNumber).padStart(6,'0')}` : order._id}. Total: ₹${total}`).catch(() => {});
 
     // emit socket (use order._id)
