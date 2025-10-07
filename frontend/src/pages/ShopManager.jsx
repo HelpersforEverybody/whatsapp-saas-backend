@@ -3,6 +3,7 @@ import React, { useEffect, useState } from "react";
 import { getApiBase } from "../hooks/useApi";
 
 const API_BASE = getApiBase();
+const API_KEY = import.meta.env.VITE_API_KEY || "";
 
 export default function ShopManager() {
   const [shops, setShops] = useState([]);
@@ -10,20 +11,23 @@ export default function ShopManager() {
   const [menu, setMenu] = useState([]);
   const [loading, setLoading] = useState(false);
 
+  // customer info (simple)
   const [customerName, setCustomerName] = useState("");
-  const [digitsOnlyPhone, setDigitsOnlyPhone] = useState("");
-  const [phoneError, setPhoneError] = useState("");
+  const [customerPhone, setCustomerPhone] = useState("");
+  const [pincode, setPincode] = useState(localStorage.getItem("customer_pincode") || "");
+  const [pincodeErr, setPincodeErr] = useState("");
 
+  // cart: { itemId: qty }
   const [cart, setCart] = useState({});
 
   useEffect(() => {
     loadShops();
-  }, []);
+  }, [pincode]);
 
   useEffect(() => {
     if (selectedShop) {
       loadMenu(selectedShop._id);
-      setCart({});
+      setCart({}); // clear cart when shop changes
     } else {
       setMenu([]);
       setCart({});
@@ -33,10 +37,22 @@ export default function ShopManager() {
   async function loadShops() {
     setLoading(true);
     try {
-      const res = await fetch(`${API_BASE}/api/shops`);
+      let url = `${API_BASE}/api/shops`;
+      if (pincode && pincode.trim()) {
+        const pin = String(pincode).trim();
+        url += `?pincode=${encodeURIComponent(pin)}`;
+      }
+      const res = await fetch(url);
+      if (!res.ok) throw new Error("Failed to load shops");
       const data = await res.json();
       setShops(data);
-      if (data.length) setSelectedShop(data[0]);
+      if (data.length) {
+        // if the previously selected shop is present, keep it; otherwise select first
+        const found = data.find(s => selectedShop && s._id === selectedShop._id) || data[0];
+        setSelectedShop(found);
+      } else {
+        setSelectedShop(null);
+      }
     } catch (e) {
       console.error("Load shops error", e);
       alert("Failed to load shops");
@@ -48,6 +64,7 @@ export default function ShopManager() {
   async function loadMenu(shopId) {
     try {
       const res = await fetch(`${API_BASE}/api/shops/${shopId}/menu`);
+      if (!res.ok) throw new Error("Failed to load menu");
       const data = await res.json();
       setMenu(data);
     } catch (e) {
@@ -56,29 +73,36 @@ export default function ShopManager() {
     }
   }
 
-  function getQty(id) {
-    return Number(cart[id] || 0);
+  // Cart helpers
+  function getQty(itemId) {
+    return Number(cart[itemId] || 0);
   }
 
-  function setQty(id, qty) {
+  function setQty(itemId, qty) {
     setCart(prev => {
       const copy = { ...prev };
-      if (qty <= 0) delete copy[id];
-      else copy[id] = Number(qty);
+      if (!qty || qty <= 0) {
+        delete copy[itemId];
+      } else {
+        copy[itemId] = Number(qty);
+      }
       return copy;
     });
   }
 
-  function increment(id) {
-    setQty(id, getQty(id) + 1);
+  function increment(itemId) {
+    const cur = getQty(itemId);
+    setQty(itemId, cur + 1);
   }
 
-  function decrement(id) {
-    setQty(id, Math.max(0, getQty(id) - 1));
+  function decrement(itemId) {
+    const cur = getQty(itemId);
+    setQty(itemId, Math.max(0, cur - 1));
   }
 
-  function addInitial(id) {
-    setQty(id, 1);
+  function addInitial(itemId) {
+    // set to 1 to convert Add -> controls
+    setQty(itemId, 1);
   }
 
   function cartItemsArray() {
@@ -101,65 +125,86 @@ export default function ShopManager() {
     return { totalQty, totalPrice, items };
   }
 
-  // Phone handling
-  function handlePhoneChange(e) {
-    // allow digits only, up to 10
-    const raw = e.target.value.replace(/\D/g, "").slice(0, 10);
-    setDigitsOnlyPhone(raw);
-    if (raw.length === 10) setPhoneError("");
+  // Validate 10-digit pincode (we'll use exact 6-digit numeric for postal pincode)
+  function validatePincode(pin) {
+    if (!pin) return true; // empty allowed -> show all shops
+    return /^\d{6}$/.test(pin.trim());
   }
 
-  function normalizedPhoneForSubmit() {
-    const d = digitsOnlyPhone.replace(/\D/g, "");
-    if (d.length === 10) return `+91${d}`;
-    return `+${d}`;
+  function setAndApplyPincode(pin) {
+    setPincode(pin);
+    localStorage.setItem("customer_pincode", pin || "");
   }
 
-  // Place order
-  async function placeOrder() {
-    if (!selectedShop) return alert("Select a shop");
+  // auto-prefix phone on blur: if 10 digits and no +, add +91
+  function handlePhoneBlur() {
+    const v = (customerPhone || "").trim();
+    if (!v) return;
+    if (v.startsWith("+")) return;
+    const digits = v.replace(/\D/g, "");
+    if (digits.length === 10) {
+      setCustomerPhone("+91" + digits);
+    }
+  }
+
+  async function placeOrder(setInlineError) {
+    // setInlineError is optional function to set inline message under phone input
+    if (!selectedShop) {
+      if (setInlineError) setInlineError("Select a shop");
+      else alert("Select a shop");
+      return;
+    }
     const { items } = cartSummary();
-    if (!items.length) return alert("Cart is empty");
-    if (!customerName) return alert("Enter name");
+    if (!items.length) {
+      if (setInlineError) setInlineError("Cart is empty");
+      else alert("Cart is empty");
+      return;
+    }
+    // phone validation: must be +91xxxxxxxxxx or 10 digits
+    const phoneDigits = (customerPhone || "").replace(/\D/g, "");
+    if (!(phoneDigits.length === 10 || (customerPhone || "").startsWith("+91"))) {
+      if (setInlineError) setInlineError("Enter valid 10-digit phone number (we prefix +91)");
+      else alert("Enter valid phone");
+      return;
+    }
 
-    const digits = digitsOnlyPhone.replace(/\D/g, "");
-    if (digits.length !== 10) {
-      setPhoneError("Enter a valid 10-digit phone number");
+    if (!validatePincode(pincode)) {
+      if (setInlineError) setInlineError("Enter a 6-digit pincode");
+      else alert("Invalid pincode");
       return;
     }
 
     const payload = {
       shop: selectedShop._id,
       customerName,
-      phone: normalizedPhoneForSubmit(),
+      phone: customerPhone,
       items: items.map(i => ({ name: i.name, qty: i.qty, price: i.price })),
     };
 
     try {
       const res = await fetch(`${API_BASE}/api/orders`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
+        headers: {
+          "Content-Type": "application/json",
+          "x-api-key": API_KEY // leave API_KEY if you use server API key for public requests; otherwise server accepts guest orders
+        },
+        body: JSON.stringify(payload)
       });
       if (!res.ok) {
         const txt = await res.text();
         throw new Error(txt || "Order failed");
       }
       const order = await res.json();
-      alert(
-        "Order placed: " +
-          (order.orderNumber ? `#${String(order.orderNumber).padStart(6, "0")}` : (order._id ? order._id.slice(0,8) : "OK"))
-      );
+      alert("Order placed: " + (order.orderNumber ? `#${String(order.orderNumber).padStart(6,'0')}` : String(order._id).slice(0,8)));
       setCart({});
-      setDigitsOnlyPhone("");
-      setPhoneError("");
     } catch (e) {
       console.error("Order failed", e);
-      alert("Order failed: " + (e.message || e));
+      if (setInlineError) setInlineError("Order failed: " + (e.message || e));
+      else alert("Order failed: " + (e.message || e));
     }
   }
 
-  // Quantity control UI
+  // helper to render quantity control or Add button
   function QtyControl({ item }) {
     const id = item._id;
     const available = Boolean(item.available);
@@ -190,32 +235,15 @@ export default function ShopManager() {
 
     return (
       <div className="flex items-center gap-2">
-        <button
-          onClick={() => decrement(id)}
-          className="px-2 py-1 bg-gray-200 rounded"
-          aria-label="decrement"
-        >
-          −
-        </button>
+        <button onClick={() => decrement(id)} className="px-2 py-1 bg-gray-200 rounded" aria-label="decrement">−</button>
         <div className="px-3 py-1 border rounded">{qty}</div>
-        <button
-          onClick={() => increment(id)}
-          className="px-2 py-1 bg-gray-200 rounded"
-          aria-label="increment"
-        >
-          +
-        </button>
+        <button onClick={() => increment(id)} className="px-2 py-1 bg-gray-200 rounded" aria-label="increment">+</button>
       </div>
     );
   }
 
   const { totalQty, totalPrice } = cartSummary();
-
-  // Button enabled state: name present, phone valid (10 digits), cart not empty
-  const isPlaceOrderEnabled =
-    customerName.trim().length > 0 &&
-    digitsOnlyPhone.replace(/\D/g, "").length === 10 &&
-    totalQty > 0;
+  const [inlinePhoneError, setInlinePhoneError] = useState("");
 
   return (
     <div className="min-h-screen p-6 bg-gray-50">
@@ -223,30 +251,39 @@ export default function ShopManager() {
         <h1 className="text-2xl font-semibold mb-4">Shops & Menu</h1>
 
         <div className="mb-4 p-4 border rounded bg-gray-50">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
             <input
               value={customerName}
               onChange={(e) => setCustomerName(e.target.value)}
               placeholder="Your Name"
               className="p-2 border rounded w-full"
             />
-
-            <div className="w-full">
-              <div className="flex items-center">
-                <div className="px-3 py-2 bg-gray-100 border rounded-l text-gray-700 select-none">
-                  +91
-                </div>
-                <input
-                  value={digitsOnlyPhone}
-                  onChange={handlePhoneChange}
-                  placeholder="Phone (10 digits)"
-                  className={`p-2 border rounded-r w-full ${phoneError ? "border-red-500" : ""}`}
-                  inputMode="numeric"
-                  pattern="[0-9]*"
-                  maxLength={10}
-                />
+            <div>
+              <input
+                value={customerPhone}
+                onChange={(e) => { setCustomerPhone(e.target.value); setInlinePhoneError(""); }}
+                onBlur={handlePhoneBlur}
+                placeholder="Your Phone (10 digits will auto-prefix +91 on blur)"
+                className="p-2 border rounded w-full"
+              />
+              {inlinePhoneError ? <div className="text-sm text-red-600 mt-1">{inlinePhoneError}</div> : null}
+            </div>
+            <div>
+              <input
+                value={pincode}
+                onChange={(e) => { setPincode(e.target.value.replace(/\D/g, '').slice(0,6)); setPincodeErr(""); }}
+                placeholder="Filter by pincode (6 digits)"
+                className="p-2 border rounded w-full"
+              />
+              <div className="flex gap-2 mt-2">
+                <button onClick={() => {
+                  if (!validatePincode(pincode)) { setPincodeErr("Enter 6 digits"); return; }
+                  setAndApplyPincode(pincode);
+                  loadShops();
+                }} className="px-3 py-1 bg-blue-600 text-white rounded">Apply</button>
+                <button onClick={() => { setPincode(''); setAndApplyPincode(''); loadShops(); }} className="px-3 py-1 bg-gray-200 rounded">Clear</button>
               </div>
-              {phoneError && <div className="text-red-600 text-sm mt-1">{phoneError}</div>}
+              {pincodeErr ? <div className="text-sm text-red-600 mt-1">{pincodeErr}</div> : null}
             </div>
           </div>
         </div>
@@ -257,9 +294,13 @@ export default function ShopManager() {
 
             {loading ? <div>Loading...</div> : shops.length === 0 ? <div>No shops</div> :
               shops.map(s => (
-                <div key={s._id} className={`p-3 mb-3 border rounded cursor-pointer ${selectedShop && selectedShop._id === s._id ? "bg-blue-50" : ""}`} onClick={() => setSelectedShop(s)}>
+                <div
+                  key={s._id}
+                  className={`p-3 mb-3 border rounded cursor-pointer ${selectedShop && selectedShop._id === s._id ? "bg-blue-50" : ""}`}
+                  onClick={() => setSelectedShop(s)}
+                >
                   <div className="font-medium">{s.name}</div>
-                  <div className="text-xs text-gray-500">{s.phone}</div>
+                  <div className="text-xs text-gray-500">{s.phone} • {s.pincode || "—"}</div>
                   {s.description ? <div className="text-xs text-gray-400">{s.description}</div> : null}
                 </div>
               ))
@@ -290,6 +331,7 @@ export default function ShopManager() {
               </div>
             )}
 
+            {/* Cart summary & Place order */}
             <div className="mt-4 flex items-center justify-between">
               <div>
                 <div className="text-sm text-gray-600">Cart: <b>{totalQty}</b> items</div>
@@ -298,9 +340,8 @@ export default function ShopManager() {
 
               <div>
                 <button
-                  onClick={placeOrder}
-                  className={`px-4 py-2 text-white rounded ${isPlaceOrderEnabled ? "bg-green-600" : "bg-gray-400 cursor-not-allowed"}`}
-                  disabled={!isPlaceOrderEnabled}
+                  onClick={() => placeOrder(setInlinePhoneError)}
+                  className="px-4 py-2 bg-green-600 text-white rounded"
                 >
                   Place Order
                 </button>
