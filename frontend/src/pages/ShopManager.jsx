@@ -1,188 +1,172 @@
-// frontend/src/pages/ShopsAndMenu.jsx
 import React, { useEffect, useState } from "react";
-import { getApiBase } from "../hooks/useApi";
 
-export default function ShopsAndMenu() {
-  const API_BASE = getApiBase();
+const API_BASE = import.meta.env.VITE_API_BASE || "https://whatsapp-saas-backend-f9ot.onrender.com";
+
+export default function ShopManager() {
   const [shops, setShops] = useState([]);
   const [selectedShop, setSelectedShop] = useState(null);
   const [menu, setMenu] = useState([]);
-  const [cart, setCart] = useState({});
-  const [customer, setCustomer] = useState({ name: "", phone: "" });
-  const [loading, setLoading] = useState(false);
+  const [qtyMap, setQtyMap] = useState({});
+  const [customerName, setCustomerName] = useState("");
+  const [customerPhone, setCustomerPhone] = useState("");
 
-  // Load all shops
-  useEffect(() => {
-    (async () => {
-      try {
-        const res = await fetch(`${API_BASE}/api/shops`);
-        const data = await res.json();
-        setShops(data);
-      } catch (err) {
-        console.error(err);
-        alert("Failed to load shops");
-      }
-    })();
-  }, []);
-
-  // Load menu for selected shop
-  async function loadMenu(shop) {
-    setSelectedShop(shop);
+  // Load all shops (public)
+  const loadShops = async () => {
     try {
-      const res = await fetch(`${API_BASE}/api/shops/${shop._id}/menu`);
+      const res = await fetch(`${API_BASE}/api/shops`);
+      const data = await res.json();
+      setShops(data || []);
+      if (data.length > 0) setSelectedShop(data[0]);
+    } catch (err) {
+      console.error("Failed to load shops:", err);
+    }
+  };
+
+  const loadMenu = async (shopId) => {
+    if (!shopId) return;
+    try {
+      const res = await fetch(`${API_BASE}/api/shops/${shopId}/menu`);
       const data = await res.json();
       setMenu(data);
-      setCart({});
     } catch (err) {
-      console.error(err);
-      alert("Failed to load menu");
+      console.error("Failed to load menu:", err);
     }
-  }
+  };
 
-  // Update quantity in cart
-  function updateQty(itemId, change) {
-    setCart((prev) => {
-      const next = { ...prev };
-      next[itemId] = Math.max(0, (next[itemId] || 0) + change);
-      return next;
-    });
-  }
+  const handleQtyChange = (itemId, value) => {
+    setQtyMap((prev) => ({
+      ...prev,
+      [itemId]: Math.max(1, Number(value) || 1),
+    }));
+  };
 
-  // Place order
-  async function placeOrder() {
-    if (!selectedShop) return alert("Select a shop first");
-    const items = menu
-      .filter((m) => cart[m._id] > 0)
-      .map((m) => ({
-        name: m.name,
-        qty: cart[m._id],
-        price: m.price,
-      }));
-    if (!items.length) return alert("Please add at least one item");
-    if (!customer.name || !customer.phone)
-      return alert("Enter your name and phone");
+  const placeOrder = async (item) => {
+    if (!selectedShop) return alert("Please select a shop first");
+    if (!customerName || !customerPhone)
+      return alert("Enter your name and phone before ordering");
 
-    setLoading(true);
+    const qty = qtyMap[item._id] || 1;
+    const payload = {
+      shop: selectedShop._id,
+      customerName,
+      phone: customerPhone,
+      items: [{ name: item.name, qty, price: item.price }],
+    };
+
     try {
       const res = await fetch(`${API_BASE}/api/orders`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          shopId: selectedShop._id,
-          items,
-          customerName: customer.name,
-          phone: customer.phone,
-        }),
+        body: JSON.stringify(payload),
       });
-      if (!res.ok) {
-        const txt = await res.text();
-        throw new Error(txt);
-      }
-      alert("✅ Order placed successfully!");
-      // Clear cart and customer info (Option 1 behavior)
-      setCart({});
-      setCustomer({ name: "", phone: "" });
+      if (!res.ok) throw new Error("Order failed");
+      const data = await res.json();
+      alert(
+        `✅ Order placed!\n\nItem: ${item.name}\nQty: ${qty}\nTotal: ₹${item.price * qty}\n\nOrder ID: ${data._id}`
+      );
+      setQtyMap({});
     } catch (err) {
-      console.error(err);
+      console.error("Order failed:", err);
       alert("Failed to place order");
-    } finally {
-      setLoading(false);
     }
-  }
+  };
+
+  useEffect(() => {
+    loadShops();
+  }, []);
+
+  useEffect(() => {
+    if (selectedShop?._id) loadMenu(selectedShop._id);
+  }, [selectedShop]);
 
   return (
-    <div className="min-h-screen bg-gray-50 p-6">
-      <div className="max-w-4xl mx-auto bg-white p-6 rounded shadow">
-        <h2 className="text-xl font-semibold mb-4">🛍 Shops & Menu</h2>
+    <div className="p-6 max-w-6xl mx-auto bg-white rounded-lg shadow">
+      <h2 className="text-2xl font-bold mb-4">Shops & Menu</h2>
 
-        {/* Shop List */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
-          {shops.map((s) => (
+      {/* Customer Info */}
+      <div className="mb-6 border p-4 rounded bg-gray-50">
+        <h3 className="font-semibold mb-2">Enter Your Details</h3>
+        <div className="flex flex-col sm:flex-row gap-3">
+          <input
+            type="text"
+            placeholder="Your Name"
+            value={customerName}
+            onChange={(e) => setCustomerName(e.target.value)}
+            className="border p-2 rounded w-full sm:w-1/2"
+          />
+          <input
+            type="text"
+            placeholder="Your Phone (+91...)"
+            value={customerPhone}
+            onChange={(e) => setCustomerPhone(e.target.value)}
+            className="border p-2 rounded w-full sm:w-1/2"
+          />
+        </div>
+      </div>
+
+      {/* Shops List */}
+      <div className="flex flex-col md:flex-row gap-6">
+        <div className="w-full md:w-1/3">
+          <h3 className="font-semibold mb-2">Available Shops</h3>
+          {shops.length === 0 && <p>Loading...</p>}
+          {shops.map((shop) => (
             <div
-              key={s._id}
-              onClick={() => loadMenu(s)}
-              className={`p-3 border rounded cursor-pointer ${
-                selectedShop && selectedShop._id === s._id
-                  ? "bg-blue-50 border-blue-400"
-                  : "hover:bg-gray-50"
+              key={shop._id}
+              onClick={() => setSelectedShop(shop)}
+              className={`border rounded p-3 mb-2 cursor-pointer ${
+                selectedShop?._id === shop._id ? "bg-blue-50 border-blue-400" : "hover:bg-gray-50"
               }`}
             >
-              <div className="font-medium">{s.name}</div>
-              <div className="text-sm text-gray-500">{s.phone}</div>
+              <div className="font-medium">{shop.name}</div>
+              <div className="text-sm text-gray-500">{shop.phone}</div>
+              {shop.description && (
+                <div className="text-xs text-gray-600 mt-1">{shop.description}</div>
+              )}
             </div>
           ))}
         </div>
 
-        {/* Menu Section */}
-        {selectedShop && (
-          <>
-            <h3 className="font-semibold text-lg mb-2">
-              Menu for {selectedShop.name}
-            </h3>
-            <div className="space-y-3 mb-6">
-              {menu.length === 0 ? (
-                <div>No items found.</div>
-              ) : (
-                menu.map((m) => (
-                  <div
-                    key={m._id}
-                    className="flex justify-between items-center border p-3 rounded"
-                  >
-                    <div>
-                      <div className="font-medium">{m.name}</div>
-                      <div className="text-sm text-gray-600">
-                        ₹{m.price} • id: {m.externalId}
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <button
-                        className="px-2 py-1 border rounded"
-                        onClick={() => updateQty(m._id, -1)}
-                      >
-                        -
-                      </button>
-                      <span>{cart[m._id] || 0}</span>
-                      <button
-                        className="px-2 py-1 border rounded"
-                        onClick={() => updateQty(m._id, 1)}
-                      >
-                        +
-                      </button>
-                    </div>
-                  </div>
-                ))
-              )}
-            </div>
+        {/* Menu */}
+        <div className="w-full md:w-2/3">
+          <h3 className="font-semibold mb-3">
+            Menu for {selectedShop ? selectedShop.name : "—"}
+          </h3>
+          {menu.length === 0 && <p className="text-gray-500">No items available</p>}
+          {menu.map((item) => (
+            <div
+              key={item._id}
+              className="border rounded p-3 mb-3 flex flex-col sm:flex-row justify-between sm:items-center"
+            >
+              <div>
+                <div className="font-medium">
+                  {item.name} • ₹{item.price}
+                </div>
+                <div className="text-xs text-gray-500">
+                  {item.available ? "Available" : "Unavailable"}
+                </div>
+              </div>
 
-            {/* Customer Info + Place Order */}
-            <div className="border-t pt-4">
-              <h4 className="font-semibold mb-2">Customer Details</h4>
-              <input
-                placeholder="Your Name"
-                value={customer.name}
-                onChange={(e) =>
-                  setCustomer({ ...customer, name: e.target.value })
-                }
-                className="w-full border p-2 rounded mb-2"
-              />
-              <input
-                placeholder="Phone (+91...)"
-                value={customer.phone}
-                onChange={(e) =>
-                  setCustomer({ ...customer, phone: e.target.value })
-                }
-                className="w-full border p-2 rounded mb-3"
-              />
-              <button
-                disabled={loading}
-                onClick={placeOrder}
-                className="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700"
-              >
-                {loading ? "Placing..." : "Place Order"}
-              </button>
+              <div className="flex gap-2 mt-2 sm:mt-0 sm:items-center">
+                <input
+                  type="number"
+                  min="1"
+                  value={qtyMap[item._id] || 1}
+                  onChange={(e) => handleQtyChange(item._id, e.target.value)}
+                  className="border p-1 w-16 text-center rounded"
+                />
+                <button
+                  disabled={!item.available}
+                  onClick={() => placeOrder(item)}
+                  className={`px-3 py-1 rounded text-white ${
+                    item.available ? "bg-green-600 hover:bg-green-700" : "bg-gray-400 cursor-not-allowed"
+                  }`}
+                >
+                  Place Order
+                </button>
+              </div>
             </div>
-          </>
-        )}
+          ))}
+        </div>
       </div>
     </div>
   );
