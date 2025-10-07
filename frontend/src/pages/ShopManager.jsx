@@ -106,9 +106,28 @@ export default function ShopManager() {
     });
   }
 
+  function cartSummary() {
+    const items = cartItemsArray();
+    const totalQty = items.reduce((s, i) => s + i.qty, 0);
+    const totalPrice = items.reduce((s, i) => s + i.qty * i.price, 0);
+    return { totalQty, totalPrice, items };
+  }
+
+  // auto-prefix phone on blur: if 10 digits and no +, add +91
+  function handlePhoneBlur() {
+    const v = (customerPhone || "").trim();
+    if (!v) return;
+    if (v.startsWith("+")) return;
+    // extract digits
+    const digits = v.replace(/\D/g, "");
+    if (digits.length === 10) {
+      setCustomerPhone("+91" + digits);
+    }
+  }
+
   async function placeOrder() {
     if (!selectedShop) return alert("Select a shop");
-    const items = cartItemsArray();
+    const { items } = cartSummary();
     if (!items.length) return alert("Cart is empty");
     if (!customerName || !customerPhone) return alert("Enter name and phone");
 
@@ -125,7 +144,7 @@ export default function ShopManager() {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "x-api-key": API_KEY // keep same API behavior as before
+          "x-api-key": API_KEY // same API pattern as before
         },
         body: JSON.stringify(payload)
       });
@@ -136,7 +155,6 @@ export default function ShopManager() {
       const order = await res.json();
       alert("Order placed: " + (order._id ? String(order._id).slice(0, 8) : "OK"));
       setCart({});
-      // optionally refresh owner/menus if needed (not changing other flows)
     } catch (e) {
       console.error("Order failed", e);
       alert("Order failed: " + (e.message || e));
@@ -195,6 +213,8 @@ export default function ShopManager() {
     );
   }
 
+  const { totalQty, totalPrice } = cartSummary();
+
   return (
     <div className="min-h-screen p-6 bg-gray-50">
       <div className="max-w-5xl mx-auto bg-white p-6 rounded shadow">
@@ -211,7 +231,8 @@ export default function ShopManager() {
             <input
               value={customerPhone}
               onChange={(e) => setCustomerPhone(e.target.value)}
-              placeholder="Your Phone (+91... or full number)"
+              onBlur={handlePhoneBlur}
+              placeholder="Your Phone (10 digits will auto-prefix +91 on blur)"
               className="p-2 border rounded w-full"
             />
           </div>
@@ -261,14 +282,21 @@ export default function ShopManager() {
               </div>
             )}
 
-            {/* Place order */}
-            <div className="mt-4 flex justify-end">
-              <button
-                onClick={placeOrder}
-                className="px-4 py-2 bg-green-600 text-white rounded"
-              >
-                Place Order
-              </button>
+            {/* Cart summary & Place order */}
+            <div className="mt-4 flex items-center justify-between">
+              <div>
+                <div className="text-sm text-gray-600">Cart: <b>{totalQty}</b> items</div>
+                <div className="text-sm text-gray-800">Total: <b>₹{totalPrice}</b></div>
+              </div>
+
+              <div>
+                <button
+                  onClick={placeOrder}
+                  className="px-4 py-2 bg-green-600 text-white rounded"
+                >
+                  Place Order
+                </button>
+              </div>
             </div>
 
           </div>
