@@ -13,7 +13,7 @@ export default function ShopManager() {
 
   // customer info (simple)
   const [customerName, setCustomerName] = useState("");
-  // NOTE: we keep an internal "digitsOnlyPhone" (exactly up to 10 digits). On blur we convert to E.164 for submitting.
+  // Only digits (10) for the phone — we render +91 visually and will prefix it on submit.
   const [digitsOnlyPhone, setDigitsOnlyPhone] = useState("");
 
   // cart: { itemId: qty }
@@ -125,19 +125,11 @@ export default function ShopManager() {
     setDigitsOnlyPhone(limited);
   }
 
-  // On blur: if exactly 10 digits, keep them (we normalize during placeOrder to +91...).
-  // If fewer than 10, leave as-is (placeOrder will reject).
-  function handlePhoneBlur() {
-    // no-op on blur for UI (we already restrict input). We validate on placeOrder.
-  }
-
-  // Build normalized phone for server: if digitsOnlyPhone has 10 digits -> +91XXXXXXXXXX
-  // If user accidentally typed full E.164 into digitsOnlyPhone (shouldn't happen), we handle.
+  // Build normalized phone for server: +91XXXXXXXXXX
   function normalizedPhoneForSubmit() {
     const d = (digitsOnlyPhone || "").replace(/\D/g, "");
     if (d.length === 10) return `+91${d}`;
-    // fallback: try to detect if digitsOnlyPhone already has an international code (rare here)
-    return `+${d}`; // server will validate and may reject
+    return `+${d}`; // fallback, server will validate/possibly reject
   }
 
   async function placeOrder() {
@@ -146,10 +138,10 @@ export default function ShopManager() {
     if (!items.length) return alert("Cart is empty");
     if (!customerName) return alert("Enter your name");
 
-    // phone validation client-side: require exactly 10 digits (we will submit +91 prefix)
+    // phone validation client-side: require exactly 10 digits
     const digits = (digitsOnlyPhone || "").replace(/\D/g, "");
     if (digits.length !== 10) {
-      return alert("Enter a valid 10-digit phone number (without +91). We will prefix +91 automatically.");
+      return alert("Enter a valid 10-digit phone number (digits only). The +91 prefix is fixed.");
     }
 
     const payload = {
@@ -164,7 +156,7 @@ export default function ShopManager() {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          // intentionally do not send x-api-key or Authorization here — guests allowed
+          // guest order — no API key or token required
         },
         body: JSON.stringify(payload)
       });
@@ -173,9 +165,8 @@ export default function ShopManager() {
         throw new Error(txt || "Order failed");
       }
       const order = await res.json();
-      alert("Order placed: " + (order.orderNumber ? `#${String(order.orderNumber).padStart(6, "0")}` : (order._id ? String(order._id).slice(0,8) : "OK")));
+      alert("Order placed: " + (order.orderNumber ? `#${String(order.orderNumber).padStart(6, "0")}` : (order._id ? String(order._id).slice(0, 8) : "OK")));
       setCart({});
-      // optionally clear customer info? keep as-is
     } catch (e) {
       console.error("Order failed", e);
       alert("Order failed: " + (e.message || e));
@@ -242,23 +233,27 @@ export default function ShopManager() {
         <h1 className="text-2xl font-semibold mb-4">Shops & Menu</h1>
 
         <div className="mb-4 p-4 border rounded bg-gray-50">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 items-center">
             <input
               value={customerName}
               onChange={(e) => setCustomerName(e.target.value)}
               placeholder="Your Name"
               className="p-2 border rounded w-full"
             />
-            <input
-              value={digitsOnlyPhone}
-              onChange={handlePhoneChange}
-              onBlur={handlePhoneBlur}
-              placeholder="Your Phone (10 digits — will auto-prefix +91 on submit)"
-              className="p-2 border rounded w-full"
-              inputMode="numeric"
-              pattern="[0-9]*"
-              maxLength={10}
-            />
+
+            {/* PHONE INPUT: fixed +91 prefix, separate 10-digit input */}
+            <div className="flex items-center gap-2">
+              <div className="px-3 py-2 bg-gray-100 border rounded-l text-gray-700 select-none">+91</div>
+              <input
+                value={digitsOnlyPhone}
+                onChange={handlePhoneChange}
+                placeholder="Phone (10 digits)"
+                className="p-2 border rounded-r w-full"
+                inputMode="numeric"
+                pattern="[0-9]*"
+                maxLength={10}
+              />
+            </div>
           </div>
         </div>
 
