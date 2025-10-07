@@ -6,6 +6,8 @@ import ShopManager from "./pages/ShopManager";
 import MerchantSignup from "./pages/MerchantSignup";
 import MerchantLogin from "./pages/MerchantLogin";
 import OwnerDashboard from "./pages/OwnerDashboard";
+import CustomerOtpLogin from "./pages/CustomerOtpLogin";
+
 
 export default function App() {
   return (
