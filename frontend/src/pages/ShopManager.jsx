@@ -1,22 +1,32 @@
 // frontend/src/pages/ShopManager.jsx
-import React, { useEffect, useState, useCallback } from "react";
+import React, { useEffect, useState } from "react";
 import { getApiBase } from "../hooks/useApi";
+
+/**
+ * Shop & Menu page (customer-facing)
+ * - Left: select shop
+ * - Right: menu for selected shop (shows availability)
+ * - You place an order for multiple items: this implementation provides
+ *   a simple cart per-shop. Add quantities to items and click "Place Order"
+ *   (single order for multiple items).
+ *
+ * This file uses the public POST /api/orders so guest placing works.
+ */
 
 export default function ShopManager() {
   const API_BASE = getApiBase();
-
   const [shops, setShops] = useState([]);
   const [selectedShop, setSelectedShop] = useState(null);
   const [menu, setMenu] = useState([]);
   const [quantities, setQuantities] = useState({});
-  const [cart, setCart] = useState({});
-  const [loading, setLoading] = useState(false);
+  const [customer, setCustomer] = useState({ name: "", phone: "" });
+  const [placing, setPlacing] = useState(false);
 
-  // separate local phone (10 digits) — prefix +91 fixed
-  const [customer, setCustomer] = useState({ name: "", localPhone: "" });
+  useEffect(() => {
+    loadShops();
+  }, []);
 
-  const loadShops = useCallback(async () => {
-    setLoading(true);
+  async function loadShops() {
     try {
       const res = await fetch(`${API_BASE}/api/shops`);
       if (!res.ok) throw new Error("Failed to load shops");
@@ -24,203 +34,128 @@ export default function ShopManager() {
       setShops(data);
       if (data.length && !selectedShop) setSelectedShop(data[0]);
     } catch (e) {
-      console.error("Load shops error", e);
-    } finally {
-      setLoading(false);
+      console.error(e);
+      alert("Cannot load shops");
     }
-  }, [API_BASE, selectedShop]);
+  }
 
-  const loadMenu = useCallback(async (shopId) => {
-    if (!shopId) return setMenu([]);
+  async function loadMenu(shopId) {
+    if (!shopId) {
+      setMenu([]);
+      return;
+    }
     try {
       const res = await fetch(`${API_BASE}/api/shops/${shopId}/menu`);
-      if (!res.ok) {
-        setMenu([]);
-        return;
-      }
+      if (!res.ok) throw new Error("Failed to load menu");
       const data = await res.json();
       setMenu(data);
+      // reset quantities
       const q = {};
-      data.forEach(it => { q[it._id] = 1; });
+      data.forEach(it => q[it._id] = 0);
       setQuantities(q);
-      setCart({});
     } catch (e) {
-      console.error("Load menu error", e);
-      setMenu([]);
+      console.error(e);
+      alert("Failed to load menu");
     }
-  }, [API_BASE]);
-
-  useEffect(() => { loadShops(); }, [loadShops]);
-
-  useEffect(() => { if (selectedShop && selectedShop._id) loadMenu(selectedShop._id); else setMenu([]); }, [selectedShop, loadMenu]);
-
-  function onlyDigits(str) {
-    return (str || "").replace(/\D+/g, '');
   }
 
-  // handle local phone input (only digits, max 10)
-  function handleLocalPhoneChange(val) {
-    const digits = onlyDigits(val).slice(0, 10);
-    setCustomer(c => ({ ...c, localPhone: digits }));
-  }
+  useEffect(() => {
+    if (selectedShop && selectedShop._id) {
+      loadMenu(selectedShop._id);
+    } else setMenu([]);
+  }, [selectedShop]);
 
-  function addToCart(item) {
-    if (!item.available) return;
-    const qty = Number(quantities[item._id] || 1);
-    setCart(prev => {
-      const copy = { ...prev };
-      copy[item._id] = (copy[item._id] || 0) + qty;
-      return copy;
-    });
-    // small UX feedback
-    // keep simple alert (you can replace with nicer UI later)
-    alert(`${item.name} x${qty} added to cart`);
-  }
-
-  function removeFromCart(itemId) {
-    setCart(prev => {
-      const copy = { ...prev };
-      delete copy[itemId];
-      return copy;
-    });
-  }
-
-  function cartItems() {
-    return Object.entries(cart).map(([id, qty]) => {
-      const it = menu.find(m => String(m._id) === String(id));
-      return it ? { _id: id, name: it.name, qty, price: it.price } : null;
-    }).filter(Boolean);
+  function updateQty(itemId, v) {
+    const val = Math.max(0, Number(v || 0));
+    setQuantities(q => ({ ...q, [itemId]: val }));
   }
 
   async function placeOrder() {
     if (!selectedShop) return alert("Select a shop");
-    if (!customer.name) return alert("Enter your name");
-    if (!customer.localPhone || customer.localPhone.length !== 10) return alert("Enter a valid 10-digit phone number");
-    const phone = `+91${customer.localPhone}`;
-    const items = cartItems().filter(it => {
-      const m = menu.find(mm => String(mm._id) === String(it._id));
-      return m && m.available;
-    }).map(it => ({ name: it.name, qty: it.qty, price: it.price }));
+    // gather items with qty > 0 and available
+    const itemsToOrder = menu
+      .filter(it => it.available && quantities[it._id] && quantities[it._id] > 0)
+      .map(it => ({ name: it.name, qty: Number(quantities[it._id]), price: Number(it.price || 0) }));
+    if (!itemsToOrder.length) return alert("Select at least one item");
+    if (!customer.name || !customer.phone) return alert("Enter name and phone");
 
-    if (!items.length) return alert("No items in cart");
-
-    const payload = { shop: selectedShop._id, customerName: customer.name, phone, items };
-
+    setPlacing(true);
     try {
       const res = await fetch(`${API_BASE}/api/orders`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload)
+        body: JSON.stringify({
+          shop: selectedShop._id,
+          customerName: customer.name,
+          phone: customer.phone,
+          items: itemsToOrder,
+        }),
       });
       if (!res.ok) {
         const txt = await res.text();
-        throw new Error(txt || res.status);
+        throw new Error(txt || "Order failed");
       }
       const data = await res.json();
-      alert("Order placed: " + String(data._id).slice(0,6));
-      setCart({});
+      alert("Order placed! Order #: " + (data.orderNumber ? String(data.orderNumber).padStart(6, "0") : data._id.slice(0,6)));
+      // reset quantities
+      const q = {};
+      menu.forEach(it => q[it._id] = 0);
+      setQuantities(q);
     } catch (e) {
       console.error("Order failed:", e);
-      alert("Order failed");
+      alert("Order failed: " + (e.message || e));
+    } finally {
+      setPlacing(false);
     }
   }
 
   return (
     <div className="min-h-screen p-6 bg-gray-50">
-      <div className="max-w-6xl mx-auto bg-white p-6 rounded shadow">
-        <h2 className="text-xl font-semibold mb-4">Shops & Menu</h2>
+      <div className="max-w-5xl mx-auto bg-white p-6 rounded shadow">
+        <h2 className="text-2xl font-semibold mb-4">Shops & Menu Manager</h2>
 
         <div className="mb-4 p-4 border rounded bg-gray-50">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            <input className="p-2 border rounded" placeholder="Your Name"
-                   value={customer.name} onChange={e => setCustomer({...customer, name: e.target.value})} />
-            <div className="flex gap-2 items-center">
-              <span className="px-3 py-2 bg-gray-100 border rounded">+91</span>
-              <input
-                className="p-2 border rounded flex-1"
-                placeholder="10-digit phone"
-                value={customer.localPhone}
-                onChange={e => handleLocalPhoneChange(e.target.value)}
-                maxLength={10}
-                inputMode="numeric"
-              />
-            </div>
+          <div className="grid grid-cols-2 gap-4">
+            <input className="p-2 border rounded" placeholder="Your Name" value={customer.name} onChange={e=>setCustomer({...customer, name:e.target.value})}/>
+            <input className="p-2 border rounded" placeholder="Your Phone (10 digits)" value={customer.phone} onChange={e=>setCustomer({...customer, phone:e.target.value.replace(/[^\d]/g,'').slice(0,10)})}/>
           </div>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <div>
-            <h4 className="font-medium mb-2">Available Shops</h4>
+            <h3 className="font-medium mb-2">Available Shops</h3>
             {shops.map(s => (
-              <div key={s._id} onClick={() => setSelectedShop(s)} className={`p-3 mb-3 border rounded cursor-pointer ${selectedShop && selectedShop._id === s._id ? "bg-blue-50" : ""}`}>
+              <div key={s._id} className={`p-4 mb-3 border rounded cursor-pointer ${selectedShop && selectedShop._id===s._id ? "bg-blue-50" : ""}`} onClick={()=>setSelectedShop(s)}>
                 <div className="font-medium">{s.name}</div>
                 <div className="text-xs text-gray-500">{s.phone}</div>
-                <div className="text-sm text-gray-400">{s.description}</div>
+                <div className="text-xs text-gray-400">{s.description}</div>
               </div>
             ))}
           </div>
 
           <div className="col-span-2">
-            <h4 className="font-medium mb-2">Menu for {selectedShop ? selectedShop.name : "—"}</h4>
+            <h3 className="font-medium mb-2">Menu for {selectedShop ? selectedShop.name : "—"}</h3>
             {menu.length === 0 ? <div>No items</div> :
               <div className="space-y-3">
-                {menu.map(item => (
-                  <div key={item._id} className="p-3 border rounded flex justify-between items-center">
+                {menu.map(it => (
+                  <div key={it._id} className="p-3 border rounded bg-white flex items-center justify-between">
                     <div>
-                      <div className="font-medium">{item.name} • ₹{item.price}</div>
-                      <div className="text-xs text-gray-500">{item.available ? "Available" : "Unavailable"}</div>
+                      <div className="font-medium">{it.name} • ₹{it.price}</div>
+                      <div className="text-xs text-gray-500">{it.available ? "Available" : "Unavailable"}</div>
                     </div>
-
                     <div className="flex items-center gap-3">
-                      <input
-                        type="number" min="1"
-                        value={quantities[item._id] || 1}
-                        onChange={e => setQuantities(q => ({ ...q, [item._id]: Number(e.target.value) }))}
-                        disabled={!item.available}
-                        className="w-20 p-1 border rounded"
-                      />
-                      <button
-                        onClick={() => addToCart(item)}
-                        disabled={!item.available}
-                        className={`px-3 py-2 rounded ${item.available ? "bg-green-600 text-white" : "bg-gray-300 text-gray-700"}`}
-                      >
-                        {item.available ? "Add" : "Unavailable"}
-                      </button>
+                      <input type="number" min="0" value={quantities[it._id]||0} onChange={e=>updateQty(it._id, e.target.value)} disabled={!it.available} className="w-20 p-2 border rounded"/>
                     </div>
                   </div>
                 ))}
               </div>
             }
 
-            <div className="mt-6 p-4 border rounded bg-gray-50">
-              <h4 className="font-medium">Cart</h4>
-              {cartItems().length === 0 ? <div>No items in cart</div> :
-                <div className="space-y-2">
-                  {cartItems().map(ci => (
-                    <div key={ci._id} className="flex justify-between items-center p-2 border rounded">
-                      <div>
-                        <div className="font-medium">{ci.name} x{ci.qty}</div>
-                        <div className="text-sm text-gray-500">₹{ci.price * ci.qty}</div>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <button onClick={() => removeFromCart(ci._id)} className="px-2 py-1 bg-gray-200 rounded">Remove</button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              }
-
-              <div className="mt-4">
-                <button
-                  onClick={placeOrder}
-                  disabled={cartItems().length === 0}
-                  className={`px-4 py-2 rounded ${cartItems().length === 0 ? "bg-gray-300" : "bg-green-600 text-white"}`}
-                >
-                  Place Order
-                </button>
-              </div>
+            <div className="mt-6 flex justify-end">
+              <button onClick={placeOrder} disabled={placing} className="px-4 py-2 bg-green-600 text-white rounded">
+                {placing ? "Placing..." : "Place Order"}
+              </button>
             </div>
-
           </div>
         </div>
       </div>
