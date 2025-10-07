@@ -1,5 +1,6 @@
 // server.js — Backend with Shop/Menu + WhatsApp + Socket.io + JWT (admin + merchant)
-// NOTE: /api/orders (create order) is PUBLIC by design so customers can place orders without auth.
+// Includes compatibility for /auth/login (admin OR merchant), /auth/merchant-login,
+// /api/me/shops for merchant-owned shops, and more robust token parsing.
 
 require('dotenv').config();
 const express = require('express');
@@ -55,36 +56,53 @@ const API_KEY_ENV = (process.env.API_KEY || '').toString().trim();
 const JWT_SECRET = (process.env.JWT_SECRET || '').toString().trim();
 const ADMIN_PASSWORD = (process.env.ADMIN_PASSWORD || '').toString().trim();
 
-function verifyJwtToken(authHeader) {
-  if (!authHeader) return null;
-  const parts = authHeader.split(/\s+/);
-  if (parts.length !== 2 || parts[0].toLowerCase() !== 'bearer') return null;
-  const token = parts[1];
+function extractTokenFromRequest(req) {
+  // Look in Authorization header (Bearer token or raw token), x-access-token, x-api-key (not for JWT), token query param
+  const auth = (req.get('authorization') || req.get('Authorization') || '').toString().trim();
+  if (auth) {
+    const parts = auth.split(/\s+/);
+    if (parts.length === 2 && parts[0].toLowerCase() === 'bearer') return parts[1];
+    // fallback: header might contain raw token
+    if (parts.length === 1) return parts[0];
+  }
+  const xat = (req.get('x-access-token') || req.get('x-access_token') || '').toString().trim();
+  if (xat) return xat;
+  const tokenQuery = (req.query && req.query.token) || '';
+  if (tokenQuery) return tokenQuery;
+  return null;
+}
+
+function verifyJwtTokenFromString(token) {
+  if (!token) return null;
+  if (!JWT_SECRET) return null;
   try {
-    const decoded = jwt.verify(token, JWT_SECRET);
-    return decoded;
+    return jwt.verify(token, JWT_SECRET);
   } catch (e) {
     return null;
   }
 }
 
+function verifyJwtTokenFromRequest(req) {
+  const token = extractTokenFromRequest(req);
+  if (!token) return null;
+  return verifyJwtTokenFromString(token);
+}
+
 // allow either admin API_KEY OR valid Bearer JWT (admin or merchant)
 const requireApiKeyOrJwt = (req, res, next) => {
   const key = (req.get('x-api-key') || req.query.api_key || '').toString().trim();
-  if (!API_KEY_ENV) {
-    return res.status(500).json({ error: 'server misconfigured: API_KEY missing' });
+
+  // prefer JWT if present
+  const decoded = verifyJwtTokenFromRequest(req);
+  if (decoded && (decoded.role === 'admin' || decoded.role === 'merchant')) {
+    req.auth = decoded;
+    return next();
   }
 
-  const authHeader = (req.get('authorization') || '').toString().trim();
-  if (authHeader) {
-    const decoded = verifyJwtToken(authHeader);
-    if (decoded && (decoded.role === 'admin' || decoded.role === 'merchant')) {
-      req.auth = decoded;
-      return next();
-    }
+  // fallback to API key
+  if (API_KEY_ENV && key && key === API_KEY_ENV) {
+    return next();
   }
-
-  if (key && key === API_KEY_ENV) return next();
 
   return res.status(401).json({ error: 'unauthorized' });
 };
@@ -184,8 +202,7 @@ async function sendWhatsAppMessageSafe(toPhone, text) {
 /* ----------------- Owner middleware (merchant) ----------------- */
 // requireOwner: validates merchant JWT and ensures ownership when shopId provided
 const requireOwner = async (req, res, next) => {
-  const authHeader = (req.get('authorization') || '').toString().trim();
-  const decoded = verifyJwtToken(authHeader);
+  const decoded = verifyJwtTokenFromRequest(req);
   if (!decoded || decoded.role !== 'merchant') {
     return res.status(401).json({ error: 'unauthorized' });
   }
@@ -208,19 +225,59 @@ const requireOwner = async (req, res, next) => {
 
 /* ----------------- Auth endpoints ----------------- */
 
-// Admin login
-app.post('/auth/login', (req, res) => {
+/*
+  POST /auth/login  (compat)
+    - if body contains { email, password } => merchant login (returns merchant token)
+    - else if body contains { password } and no email => admin password flow (returns admin token)
+*/
+app.post('/auth/login', async (req, res) => {
   try {
-    const { password } = req.body || {};
-    if (!ADMIN_PASSWORD) return res.status(500).json({ error: 'server misconfigured: ADMIN_PASSWORD missing' });
-    if (!JWT_SECRET) return res.status(500).json({ error: 'server misconfigured: JWT_SECRET missing' });
-    if (!password || password !== ADMIN_PASSWORD) {
-      return res.status(401).json({ error: 'invalid credentials' });
+    const body = req.body || {};
+
+    // merchant login (email + password)
+    if (body.email && body.password) {
+      const email = String(body.email).toLowerCase();
+      const user = await User.findOne({ email });
+      if (!user) return res.status(401).json({ error: 'invalid credentials' });
+      const ok = user.verifyPassword(body.password);
+      if (!ok) return res.status(401).json({ error: 'invalid credentials' });
+      if (!JWT_SECRET) return res.status(500).json({ error: 'server misconfigured: JWT_SECRET missing' });
+      const token = jwt.sign({ role: 'merchant', userId: String(user._id) }, JWT_SECRET, { expiresIn: '12h' });
+      return res.json({ token, userId: user._id });
     }
-    const token = jwt.sign({ role: 'admin', issuedAt: Date.now() }, JWT_SECRET, { expiresIn: '12h' });
-    return res.json({ token, expiresIn: 12 * 3600 });
+
+    // admin login (password only)
+    if (body.password && !body.email) {
+      if (!ADMIN_PASSWORD) return res.status(500).json({ error: 'server misconfigured: ADMIN_PASSWORD missing' });
+      if (!JWT_SECRET) return res.status(500).json({ error: 'server misconfigured: JWT_SECRET missing' });
+      if (!body.password || body.password !== ADMIN_PASSWORD) {
+        return res.status(401).json({ error: 'invalid credentials' });
+      }
+      const token = jwt.sign({ role: 'admin', issuedAt: Date.now() }, JWT_SECRET, { expiresIn: '12h' });
+      return res.json({ token, expiresIn: 12 * 3600 });
+    }
+
+    return res.status(400).json({ error: 'invalid request' });
   } catch (e) {
     console.error('Login error', e);
+    return res.status(500).json({ error: 'server error' });
+  }
+});
+
+// keep the old merchant-login endpoint too (compat)
+app.post('/auth/merchant-login', async (req, res) => {
+  try {
+    const { email, password } = req.body || {};
+    if (!email || !password) return res.status(400).json({ error: 'email and password required' });
+    const user = await User.findOne({ email: email.toLowerCase() });
+    if (!user) return res.status(401).json({ error: 'invalid credentials' });
+    const ok = user.verifyPassword(password);
+    if (!ok) return res.status(401).json({ error: 'invalid credentials' });
+    if (!JWT_SECRET) return res.status(500).json({ error: 'server misconfigured: JWT_SECRET missing' });
+    const token = jwt.sign({ role: 'merchant', userId: String(user._id) }, JWT_SECRET, { expiresIn: '12h' });
+    return res.json({ token, userId: user._id });
+  } catch (e) {
+    console.error('Merchant login error', e);
     return res.status(500).json({ error: 'server error' });
   }
 });
@@ -242,24 +299,6 @@ app.post('/auth/signup', async (req, res) => {
     return res.status(201).json({ userId: user._id, shopId: shop ? shop._id : null });
   } catch (e) {
     console.error('Signup error', e);
-    return res.status(500).json({ error: 'server error' });
-  }
-});
-
-// Merchant login
-app.post('/auth/merchant-login', async (req, res) => {
-  try {
-    const { email, password } = req.body || {};
-    if (!email || !password) return res.status(400).json({ error: 'email and password required' });
-    const user = await User.findOne({ email: email.toLowerCase() });
-    if (!user) return res.status(401).json({ error: 'invalid credentials' });
-    const ok = user.verifyPassword(password);
-    if (!ok) return res.status(401).json({ error: 'invalid credentials' });
-    if (!JWT_SECRET) return res.status(500).json({ error: 'server misconfigured: JWT_SECRET missing' });
-    const token = jwt.sign({ role: 'merchant', userId: String(user._id) }, JWT_SECRET, { expiresIn: '12h' });
-    return res.json({ token, userId: user._id });
-  } catch (e) {
-    console.error('Merchant login error', e);
     return res.status(500).json({ error: 'server error' });
   }
 });
@@ -324,7 +363,7 @@ app.delete('/api/shops/:shopId/items/:itemId', requireOwner, async (req, res) =>
 /* List menu (public) */
 app.get('/api/shops/:shopId/menu', async (req, res) => {
   try {
-    const items = await MenuItem.find({ shop: req.params.shopId, available: true }).select('-__v').lean();
+    const items = await MenuItem.find({ shop: req.params.shopId }).select('-__v').lean();
     res.json(items);
   } catch (err) {
     console.error('List menu error:', err);
@@ -338,6 +377,19 @@ app.get('/api/shops', async (req, res) => {
     const shops = await Shop.find().select('-__v').lean();
     res.json(shops);
   } catch (err) {
+    res.status(500).json({ error: 'failed' });
+  }
+});
+
+/* ----------------- merchant-only: list shops owned by logged-in merchant ----------------- */
+app.get('/api/me/shops', async (req, res) => {
+  try {
+    const decoded = verifyJwtTokenFromRequest(req);
+    if (!decoded || decoded.role !== 'merchant') return res.status(401).json({ error: 'unauthorized' });
+    const shops = await Shop.find({ owner: decoded.userId }).lean();
+    res.json(shops);
+  } catch (err) {
+    console.error('me/shops error', err);
     res.status(500).json({ error: 'failed' });
   }
 });
