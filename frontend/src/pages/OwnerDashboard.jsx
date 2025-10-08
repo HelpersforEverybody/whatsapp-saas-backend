@@ -3,15 +3,6 @@ import React, { useEffect, useState } from "react";
 import { apiFetch, getApiBase } from "../hooks/useApi";
 import { useNavigate } from "react-router-dom";
 
-/**
- * OwnerDashboard (layout-only changes)
- * - Centers the selected shop name in the top area.
- * - Adds simple "Orders / Menu" tabs so only one is visible at a time.
- * - Keeps all existing logic (API calls, item/order actions) unchanged.
- *
- * Drop-in replacement — logic preserved from your previous version.
- */
-
 export default function OwnerDashboard() {
   const API_BASE = getApiBase();
   const navigate = useNavigate();
@@ -21,8 +12,6 @@ export default function OwnerDashboard() {
   const [menu, setMenu] = useState([]);
   const [newItem, setNewItem] = useState({ name: "", price: "" });
   const [loading, setLoading] = useState(false);
-
-  // UI state: which tab is active: 'orders' or 'menu'
   const [activeTab, setActiveTab] = useState("orders");
 
   function logout() {
@@ -41,9 +30,7 @@ export default function OwnerDashboard() {
     setLoading(true);
     try {
       const res = await apiFetch("/api/me/shops");
-      if (!res.ok) {
-        throw new Error("Failed to load shops");
-      }
+      if (!res.ok) throw new Error("Failed to load shops");
       const data = await res.json();
       setShops(data);
       if (data.length && !selectedShop) setSelectedShop(data[0]);
@@ -69,7 +56,6 @@ export default function OwnerDashboard() {
       setOrders(data);
     } catch (e) {
       console.error("Load orders for shop failed", e);
-      // keep UI silent except a small alert
       alert("Load orders for shop failed");
     }
   }
@@ -91,7 +77,9 @@ export default function OwnerDashboard() {
   }
 
   async function updateOrderStatus(orderId, newStatus) {
-    setOrders(prev => prev.map(o => (o._id === orderId ? { ...o, status: newStatus } : o)));
+    setOrders((prev) =>
+      prev.map((o) => (o._id === orderId ? { ...o, status: newStatus } : o))
+    );
     try {
       const res = await apiFetch(`/api/orders/${orderId}/status`, {
         method: "PATCH",
@@ -103,11 +91,14 @@ export default function OwnerDashboard() {
         throw new Error(txt || "Failed to update status");
       }
       const updated = await res.json();
-      setOrders(prev => prev.map(o => (o._id === updated._id ? updated : o)));
+      setOrders((prev) =>
+        prev.map((o) => (o._id === updated._id ? updated : o))
+      );
     } catch (e) {
       console.error("Update status error", e);
       alert("Failed to update status: " + (e.message || e));
-      if (selectedShop && selectedShop._id) loadOrdersForShop(selectedShop._id);
+      if (selectedShop && selectedShop._id)
+        loadOrdersForShop(selectedShop._id);
     }
   }
 
@@ -123,7 +114,10 @@ export default function OwnerDashboard() {
       const res = await apiFetch(`/api/shops/${selectedShop._id}/items`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: newItem.name, price: Number(newItem.price || 0) }),
+        body: JSON.stringify({
+          name: newItem.name,
+          price: Number(newItem.price || 0),
+        }),
       });
       if (!res.ok) {
         const txt = await res.text();
@@ -132,7 +126,6 @@ export default function OwnerDashboard() {
       }
       setNewItem({ name: "", price: "" });
       await loadMenuForShop(selectedShop._id);
-      // After adding an item, show Menu tab
       setActiveTab("menu");
     } catch (e) {
       console.error(e);
@@ -143,11 +136,14 @@ export default function OwnerDashboard() {
   async function toggleAvailability(item) {
     if (!selectedShop) return;
     try {
-      const res = await apiFetch(`/api/shops/${selectedShop._id}/items/${item._id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ available: !item.available }),
-      });
+      const res = await apiFetch(
+        `/api/shops/${selectedShop._id}/items/${item._id}`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ available: !item.available }),
+        }
+      );
       if (!res.ok) {
         const txt = await res.text();
         alert("Toggle failed: " + (txt || res.status));
@@ -164,9 +160,10 @@ export default function OwnerDashboard() {
     if (!selectedShop) return;
     if (!confirm("Delete this item?")) return;
     try {
-      const res = await apiFetch(`/api/shops/${selectedShop._id}/items/${item._id}`, {
-        method: "DELETE",
-      });
+      const res = await apiFetch(
+        `/api/shops/${selectedShop._id}/items/${item._id}`,
+        { method: "DELETE" }
+      );
       if (!res.ok) {
         const txt = await res.text();
         alert("Delete failed: " + (txt || res.status));
@@ -186,11 +183,14 @@ export default function OwnerDashboard() {
     if (priceStr === null) return;
     const price = Number(priceStr || 0);
     try {
-      const res = await apiFetch(`/api/shops/${selectedShop._id}/items/${item._id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, price }),
-      });
+      const res = await apiFetch(
+        `/api/shops/${selectedShop._id}/items/${item._id}`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name, price }),
+        }
+      );
       if (!res.ok) {
         const txt = await res.text();
         alert("Edit failed: " + (txt || res.status));
@@ -202,22 +202,50 @@ export default function OwnerDashboard() {
       alert("Network error editing item");
     }
   }
-  async function toggleOnline(shop) {
-  try {
-    const res = await apiFetch(`/api/shops/${shop._id}/status`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ online: !shop.online }),
-    });
-    if (!res.ok) throw new Error("Failed to toggle status");
-    const updated = await res.json();
-    alert(updated.shop.online ? "Shop is now ONLINE" : "Shop is now OFFLINE");
-    await loadShops();
-  } catch (e) {
-    alert("Toggle error: " + (e.message || e));
-  }
-}
 
+  async function toggleOnline(shop) {
+    try {
+      const res = await apiFetch(`/api/shops/${shop._id}/status`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ online: !shop.online }),
+      });
+      if (!res.ok) throw new Error("Failed to toggle status");
+      const updated = await res.json();
+      alert(
+        updated.shop.online ? "Shop is now ONLINE" : "Shop is now OFFLINE"
+      );
+      await loadShops();
+    } catch (e) {
+      alert("Toggle error: " + (e.message || e));
+    }
+  }
+
+  async function editShopDetails() {
+    if (!selectedShop) return alert("Select a shop first");
+    const newName = prompt("Shop name", selectedShop.name);
+    const newPhone = prompt("Phone", selectedShop.phone);
+    const newAddress = prompt("Address", selectedShop.address || "");
+    const newPincode = prompt("Pincode", selectedShop.pincode || "");
+    if (!newName || !newPhone || !newAddress || !newPincode)
+      return alert("All fields required");
+    try {
+      await apiFetch(`/api/shops/${selectedShop._id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: newName,
+          phone: newPhone,
+          address: newAddress,
+          pincode: newPincode,
+        }),
+      });
+      alert("Shop details updated!");
+      await loadShops();
+    } catch (e) {
+      alert("Failed to update shop: " + (e.message || e));
+    }
+  }
 
   useEffect(() => {
     const token = localStorage.getItem("merchant_token");
@@ -226,7 +254,6 @@ export default function OwnerDashboard() {
       return;
     }
     loadShops();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -237,166 +264,241 @@ export default function OwnerDashboard() {
       setOrders([]);
       setMenu([]);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedShop]);
 
   return (
     <div className="min-h-screen p-6 bg-gray-50">
       <div className="max-w-6xl mx-auto bg-white p-6 rounded shadow">
-
-        {/* Top bar: left = title, center = selected shop name, right = logout */}
         <div className="flex items-center justify-between mb-4">
           <div className="w-1/4">
             <h2 className="text-lg font-semibold">Your Shops</h2>
           </div>
 
           <div className="w-1/2 text-center">
-            {/* Selected shop name centered at top (layout-only change) */}
             <div className="text-xl font-semibold">
               {selectedShop ? selectedShop.name : "Owner Dashboard"}
             </div>
             <div className="text-xs text-gray-500">
-              {selectedShop && (
-  <button
-    onClick={() => toggleOnline(selectedShop)}
-    className={`mt-2 px-3 py-1 rounded text-sm ${selectedShop.online ? "bg-green-100 text-green-800" : "bg-gray-200 text-gray-700"}`}
-  >
-    {selectedShop.online ? "🟢 Online - Accepting Orders" : "⚫ Offline - Paused"}
-  </button>
-)}
-
               {selectedShop ? selectedShop.phone : ""}
             </div>
+
+            {selectedShop && (
+              <button
+                onClick={() => toggleOnline(selectedShop)}
+                className={`mt-2 px-3 py-1 rounded text-sm ${
+                  selectedShop.online
+                    ? "bg-green-100 text-green-800"
+                    : "bg-gray-200 text-gray-700"
+                }`}
+              >
+                {selectedShop.online
+                  ? "🟢 Online - Accepting Orders"
+                  : "⚫ Offline - Paused"}
+              </button>
+            )}
           </div>
 
           <div className="w-1/4 flex justify-end">
-            <button onClick={logout} className="px-3 py-1 bg-red-500 text-white rounded">Logout</button>
+            <button
+              onClick={logout}
+              className="px-3 py-1 bg-red-500 text-white rounded"
+            >
+              Logout
+            </button>
           </div>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          {/* Left column: shop list + add item form */}
           <div className="col-span-1">
-            <div>
-              {loading ? <div>Loading...</div> : shops.length === 0 ? <div>No shops</div> :
-                shops.map(s => (
-                  <div
-                    key={s._id}
-                    className={`p-2 mb-2 border rounded cursor-pointer ${selectedShop && selectedShop._id===s._id ? "bg-blue-50" : ""}`}
-                    onClick={()=>setSelectedShop(s)}
-                  >
-                    <div className="font-medium">{s.name}</div>
-                    <div className="text-xs text-gray-500">{s.phone}</div>
-                  </div>
-                ))
-              }
+            {loading ? (
+              <div>Loading...</div>
+            ) : shops.length === 0 ? (
+              <div>No shops</div>
+            ) : (
+              shops.map((s) => (
+                <div
+                  key={s._id}
+                  className={`p-2 mb-2 border rounded cursor-pointer ${
+                    selectedShop && selectedShop._id === s._id
+                      ? "bg-blue-50"
+                      : ""
+                  }`}
+                  onClick={() => setSelectedShop(s)}
+                >
+                  <div className="font-medium">{s.name}</div>
+                  <div className="text-xs text-gray-500">{s.phone}</div>
+                </div>
+              ))
+            )}
+
+            <div className="mt-4 border-t pt-3">
+              <h4 className="font-medium mb-2">Shop Settings</h4>
+              <button
+                onClick={editShopDetails}
+                className="px-3 py-1 bg-blue-500 text-white rounded mr-2"
+              >
+                Edit Shop Details
+              </button>
             </div>
 
             <div className="mt-4 border-t pt-3">
-              <div className="mt-4 border-t pt-3">
-  <h4 className="font-medium mb-2">Shop Settings</h4>
-  <button
-    onClick={() => {
-      const newName = prompt("Shop name", selectedShop.name);
-      const newPhone = prompt("Phone", selectedShop.phone);
-      const newAddress = prompt("Address", selectedShop.address || "");
-      const newPincode = prompt("Pincode", selectedShop.pincode || "");
-      if (!newName || !newPhone || !newAddress || !newPincode) return alert("All fields required");
-      apiFetch(`/api/shops/${selectedShop._id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          name: newName,
-          phone: newPhone,
-          address: newAddress,
-          pincode: newPincode,
-        }),
-      }).then(() => loadShops());
-    }}
-    className="px-3 py-1 bg-blue-500 text-white rounded"
-  >
-    Edit Shop Details
-  </button>
-</div>
-
+              <h4 className="font-medium">Add Item to Selected Shop</h4>
+              <input
+                value={newItem.name}
+                onChange={(e) =>
+                  setNewItem({ ...newItem, name: e.target.value })
+                }
+                placeholder="Item name"
+                className="w-full p-2 border rounded my-2"
+              />
+              <input
+                value={newItem.price}
+                onChange={(e) =>
+                  setNewItem({ ...newItem, price: e.target.value })
+                }
+                placeholder="Price"
+                type="number"
+                className="w-full p-2 border rounded my-2"
+              />
+              <button
+                onClick={addItem}
+                className="px-3 py-2 bg-green-600 text-white rounded"
+              >
+                Add item
+              </button>
+            </div>
           </div>
 
-          {/* Right area: tabbed content */}
           <div className="col-span-2">
-            {/* Tabs header */}
             <div className="flex items-center justify-between mb-3">
               <div className="flex gap-2">
                 <button
                   onClick={() => setActiveTab("orders")}
-                  className={`px-3 py-1 rounded ${activeTab === "orders" ? "bg-blue-600 text-white" : "bg-gray-100 text-gray-700"}`}
+                  className={`px-3 py-1 rounded ${
+                    activeTab === "orders"
+                      ? "bg-blue-600 text-white"
+                      : "bg-gray-100 text-gray-700"
+                  }`}
                 >
                   Orders
                 </button>
                 <button
                   onClick={() => setActiveTab("menu")}
-                  className={`px-3 py-1 rounded ${activeTab === "menu" ? "bg-blue-600 text-white" : "bg-gray-100 text-gray-700"}`}
+                  className={`px-3 py-1 rounded ${
+                    activeTab === "menu"
+                      ? "bg-blue-600 text-white"
+                      : "bg-gray-100 text-gray-700"
+                  }`}
                 >
                   Menu
                 </button>
               </div>
-              <div className="text-sm text-gray-500">Shop: {selectedShop ? selectedShop.name : "—"}</div>
+              <div className="text-sm text-gray-500">
+                Shop: {selectedShop ? selectedShop.name : "—"}
+              </div>
             </div>
 
-            {/* Orders tab */}
             {activeTab === "orders" && (
               <div>
-                <h3 className="font-medium mb-2">Orders for {selectedShop ? selectedShop.name : "—"}</h3>
-                {orders.length === 0 ? <div>No orders</div> :
+                <h3 className="font-medium mb-2">
+                  Orders for {selectedShop ? selectedShop.name : "—"}
+                </h3>
+                {orders.length === 0 ? (
+                  <div>No orders</div>
+                ) : (
                   <div className="space-y-3">
-                    {orders.map(o => {
+                    {orders.map((o) => {
                       const status = (o.status || "").toLowerCase();
                       return (
-                        <div key={o._id} className="p-3 border rounded bg-white flex justify-between">
+                        <div
+                          key={o._id}
+                          className="p-3 border rounded bg-white flex justify-between"
+                        >
                           <div>
-                            <div className="font-medium">{displayOrderLabel(o)} — <span className="text-sm text-gray-600">{status}</span></div>
-                            <div className="text-sm text-gray-600">{o.items.map(i=>`${i.name} x${i.qty}`).join(", ")}</div>
-                            <div className="text-sm text-gray-600">₹{o.total}</div>
+                            <div className="font-medium">
+                              {displayOrderLabel(o)} —{" "}
+                              <span className="text-sm text-gray-600">
+                                {status}
+                              </span>
+                            </div>
+                            <div className="text-sm text-gray-600">
+                              {o.items
+                                .map((i) => `${i.name} x${i.qty}`)
+                                .join(", ")}
+                            </div>
+                            <div className="text-sm text-gray-600">
+                              ₹{o.total}
+                            </div>
                           </div>
 
                           <div className="flex flex-col items-end gap-2">
-                            <div className="text-sm">Customer: <b>{o.customerName}</b></div>
+                            <div className="text-sm">
+                              Customer: <b>{o.customerName}</b>
+                            </div>
                             <div className="flex gap-2">
                               <button
-                                onClick={() => updateOrderStatus(o._id, "accepted")}
+                                onClick={() =>
+                                  updateOrderStatus(o._id, "accepted")
+                                }
                                 disabled={status !== "received"}
-                                className={`px-3 py-1 rounded ${status === "received" ? "bg-blue-600 text-white" : "bg-gray-200 text-gray-600"}`}
+                                className={`px-3 py-1 rounded ${
+                                  status === "received"
+                                    ? "bg-blue-600 text-white"
+                                    : "bg-gray-200 text-gray-600"
+                                }`}
                               >
                                 Accept
                               </button>
-
                               <button
-                                onClick={() => updateOrderStatus(o._id, "packed")}
+                                onClick={() =>
+                                  updateOrderStatus(o._id, "packed")
+                                }
                                 disabled={status !== "accepted"}
-                                className={`px-3 py-1 rounded ${status === "accepted" ? "bg-yellow-500 text-white" : "bg-gray-200 text-gray-600"}`}
+                                className={`px-3 py-1 rounded ${
+                                  status === "accepted"
+                                    ? "bg-yellow-500 text-white"
+                                    : "bg-gray-200 text-gray-600"
+                                }`}
                               >
                                 Packed
                               </button>
-
                               <button
-                                onClick={() => updateOrderStatus(o._id, "out-for-delivery")}
+                                onClick={() =>
+                                  updateOrderStatus(o._id, "out-for-delivery")
+                                }
                                 disabled={status !== "packed"}
-                                className={`px-3 py-1 rounded ${status === "packed" ? "bg-indigo-600 text-white" : "bg-gray-200 text-gray-600"}`}
+                                className={`px-3 py-1 rounded ${
+                                  status === "packed"
+                                    ? "bg-indigo-600 text-white"
+                                    : "bg-gray-200 text-gray-600"
+                                }`}
                               >
                                 Out for delivery
                               </button>
-
                               <button
-                                onClick={() => updateOrderStatus(o._id, "delivered")}
+                                onClick={() =>
+                                  updateOrderStatus(o._id, "delivered")
+                                }
                                 disabled={status !== "out-for-delivery"}
-                                className={`px-3 py-1 rounded ${status === "out-for-delivery" ? "bg-green-600 text-white" : "bg-gray-200 text-gray-600"}`}
+                                className={`px-3 py-1 rounded ${
+                                  status === "out-for-delivery"
+                                    ? "bg-green-600 text-white"
+                                    : "bg-gray-200 text-gray-600"
+                                }`}
                               >
                                 Delivered
                               </button>
-
                               <button
                                 onClick={() => cancelOrder(o._id)}
-                                disabled={status === "delivered" || status === "cancelled"}
-                                className={`px-3 py-1 rounded ${status === "cancelled" ? "bg-gray-400 text-white" : "bg-red-500 text-white"}`}
+                                disabled={
+                                  status === "delivered" ||
+                                  status === "cancelled"
+                                }
+                                className={`px-3 py-1 rounded ${
+                                  status === "cancelled"
+                                    ? "bg-gray-400 text-white"
+                                    : "bg-red-500 text-white"
+                                }`}
                               >
                                 Cancel
                               </button>
@@ -406,39 +508,32 @@ export default function OwnerDashboard() {
                       );
                     })}
                   </div>
-                }
+                )}
               </div>
             )}
 
-            {/* Menu tab */}
             {activeTab === "menu" && (
               <div>
-                <h3 className="font-medium mb-2">Menu for {selectedShop ? selectedShop.name : "—"}</h3>
-                {menu.length === 0 ? <div>No items</div> :
+                <h3 className="font-medium mb-2">
+                  Menu for {selectedShop ? selectedShop.name : "—"}
+                </h3>
+                {menu.length === 0 ? (
+                  <div>No items</div>
+                ) : (
                   <div className="space-y-3">
-                    {menu.map(it => (
-                      <div key={it._id} className="p-3 border rounded bg-white flex justify-between items-center">
+                    {menu.map((it) => (
+                      <div
+                        key={it._id}
+                        className="p-3 border rounded bg-white flex justify-between items-center"
+                      >
                         <div>
-                          <div className="font-medium">{it.name} • ₹{it.price}</div>
-                          <div className="text-xs text-gray-500">ID: {it.externalId || it._id}</div>
+                          <div className="font-medium">
+                            {it.name} • ₹{it.price}
+                          </div>
+                          <div className="text-xs text-gray-500">
+                            ID: {it.externalId || it._id}
+                          </div>
                         </div>
                         <div className="flex gap-2">
-                          <button onClick={()=>toggleAvailability(it)} className={`px-3 py-1 rounded ${it.available ? "bg-green-600 text-white" : "bg-gray-300 text-gray-700"}`}>
-                            {it.available ? "Enabled" : "Disabled"}
-                          </button>
-                          <button onClick={()=>editItem(it)} className="px-3 py-1 bg-yellow-400 rounded">Edit</button>
-                          <button onClick={()=>deleteItem(it)} className="px-3 py-1 bg-gray-300 rounded">Delete</button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                }
-              </div>
-            )}
-
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
+                          <button
+                            on
