@@ -315,6 +315,7 @@ app.post('/api/shops', requireOwner, async (req, res) => {
   }
 });
 
+
 // Public list: only online shops, optional pincode
 app.get('/api/shops', async (req, res) => {
   try {
@@ -355,6 +356,24 @@ app.put('/api/shops/:shopId/status', requireOwner, async (req, res) => {
   } catch (err) {
     console.error('Toggle shop status error:', err);
     res.status(500).json({ error: 'failed to toggle status' });
+  }
+});
+// Edit shop details (owner only)
+app.patch('/api/shops/:shopId', requireOwner, async (req, res) => {
+  try {
+    const update = {};
+    const allowed = ['name', 'phone', 'address', 'pincode', 'description', 'online'];
+    for (const k of allowed) {
+      if (typeof req.body[k] !== 'undefined') update[k] = req.body[k];
+    }
+    if (Object.keys(update).length === 0) return res.status(400).json({ error: 'nothing to update' });
+
+    const shop = await Shop.findOneAndUpdate({ _id: req.params.shopId, owner: req.merchantId }, update, { new: true });
+    if (!shop) return res.status(404).json({ error: 'not found or not owner' });
+    res.json(shop);
+  } catch (err) {
+    console.error('Edit shop error:', err);
+    res.status(500).json({ error: 'failed to edit shop' });
   }
 });
 
