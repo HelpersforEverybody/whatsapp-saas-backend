@@ -322,10 +322,66 @@ export default function OwnerDashboard() {
         {/* Main area */}
         <main className="col-span-9">
           {/* header: centered shop name & pincode */}
-          <div className="text-center mb-4">
-            <div className="text-lg font-semibold">{selectedShop ? selectedShop.name : "Shop Name"}</div>
-            <div className="text-sm text-gray-500">{selectedShop ? `${selectedShop.address || ""}${selectedShop.pincode ? " • " + selectedShop.pincode : ""}` : "Address • Pincode"}</div>
-          </div>
+        {/* header: centered shop name & pincode */}
+<div className="flex flex-col items-center justify-center mb-4 relative">
+  {selectedShop && (
+    <div className="absolute right-0 top-0 flex items-center gap-2">
+      <label className="flex items-center gap-2 cursor-pointer">
+        <input
+          type="checkbox"
+          checked={!!selectedShop.online}
+          onChange={async (e) => {
+            const newVal = e.target.checked;
+            setShopMsg("Updating...");
+            // Optimistic UI
+            setSelectedShop(prev => prev ? ({ ...prev, online: newVal }) : prev);
+            try {
+              const res = await apiFetch(`/api/shops/${selectedShop._id}`, {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ online: newVal }),
+              });
+              if (!res.ok) {
+                const txt = await res.text();
+                throw new Error(txt || "Failed to update");
+              }
+              await res.json();
+              setShopMsg(newVal ? "Shop is now Online" : "Shop is now Offline");
+              await loadShops();
+            } catch (err) {
+              console.error("toggle online error", err);
+              setShopMsg("Failed to change status");
+              setSelectedShop(prev => prev ? ({ ...prev, online: !newVal }) : prev);
+            }
+          }}
+          className="toggle-checkbox"
+        />
+        <span
+          className={`px-2 py-1 rounded text-xs ${
+            selectedShop.online
+              ? "bg-green-100 text-green-800"
+              : "bg-red-100 text-red-800"
+          }`}
+        >
+          {selectedShop.online ? "Online" : "Offline"}
+        </span>
+      </label>
+    </div>
+  )}
+
+  <div className="text-lg font-semibold">
+    {selectedShop ? selectedShop.name : "Shop Name"}
+  </div>
+
+  <div className="text-sm text-gray-500">
+    {selectedShop
+      ? `${selectedShop.address || ""}${
+          selectedShop.pincode ? " • " + selectedShop.pincode : ""
+        }`
+      : "Address • Pincode"}
+  </div>
+</div>
+
 
           {/* top inline messages */}
           {(msg || shopMsg || itemMsg || orderMsg) && (
