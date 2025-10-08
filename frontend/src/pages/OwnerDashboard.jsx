@@ -202,6 +202,22 @@ export default function OwnerDashboard() {
       alert("Network error editing item");
     }
   }
+  async function toggleOnline(shop) {
+  try {
+    const res = await apiFetch(`/api/shops/${shop._id}/status`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ online: !shop.online }),
+    });
+    if (!res.ok) throw new Error("Failed to toggle status");
+    const updated = await res.json();
+    alert(updated.shop.online ? "Shop is now ONLINE" : "Shop is now OFFLINE");
+    await loadShops();
+  } catch (e) {
+    alert("Toggle error: " + (e.message || e));
+  }
+}
+
 
   useEffect(() => {
     const token = localStorage.getItem("merchant_token");
@@ -240,6 +256,15 @@ export default function OwnerDashboard() {
               {selectedShop ? selectedShop.name : "Owner Dashboard"}
             </div>
             <div className="text-xs text-gray-500">
+              {selectedShop && (
+  <button
+    onClick={() => toggleOnline(selectedShop)}
+    className={`mt-2 px-3 py-1 rounded text-sm ${selectedShop.online ? "bg-green-100 text-green-800" : "bg-gray-200 text-gray-700"}`}
+  >
+    {selectedShop.online ? "🟢 Online - Accepting Orders" : "⚫ Offline - Paused"}
+  </button>
+)}
+
               {selectedShop ? selectedShop.phone : ""}
             </div>
           </div>
@@ -268,11 +293,32 @@ export default function OwnerDashboard() {
             </div>
 
             <div className="mt-4 border-t pt-3">
-              <h4 className="font-medium">Add Item to Selected Shop</h4>
-              <input value={newItem.name} onChange={e=>setNewItem({...newItem, name:e.target.value})} placeholder="Item name" className="w-full p-2 border rounded my-2"/>
-              <input value={newItem.price} onChange={e=>setNewItem({...newItem, price:e.target.value})} placeholder="Price" type="number" className="w-full p-2 border rounded my-2"/>
-              <button onClick={addItem} className="px-3 py-2 bg-green-600 text-white rounded">Add item</button>
-            </div>
+              <div className="mt-4 border-t pt-3">
+  <h4 className="font-medium mb-2">Shop Settings</h4>
+  <button
+    onClick={() => {
+      const newName = prompt("Shop name", selectedShop.name);
+      const newPhone = prompt("Phone", selectedShop.phone);
+      const newAddress = prompt("Address", selectedShop.address || "");
+      const newPincode = prompt("Pincode", selectedShop.pincode || "");
+      if (!newName || !newPhone || !newAddress || !newPincode) return alert("All fields required");
+      apiFetch(`/api/shops/${selectedShop._id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: newName,
+          phone: newPhone,
+          address: newAddress,
+          pincode: newPincode,
+        }),
+      }).then(() => loadShops());
+    }}
+    className="px-3 py-1 bg-blue-500 text-white rounded"
+  >
+    Edit Shop Details
+  </button>
+</div>
+
           </div>
 
           {/* Right area: tabbed content */}
