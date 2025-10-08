@@ -4,14 +4,12 @@ import { apiFetch, getApiBase } from "../hooks/useApi";
 import { useNavigate } from "react-router-dom";
 
 /**
- * OwnerDashboard — view-mode layout:
- * - Sidebar (Your Shop / Menu / Order) left
- * - Main area right: shows ONLY the active view
- *   - your-shop -> inline shop edit panel in the main area (tabs hidden)
- *   - menu -> inline add/edit form (top-right) + menu list
- *   - order -> orders list (add/edit form hidden)
+ * OwnerDashboard — full owner controls always enabled.
+ * - Owner can edit shop/menu/orders regardless of shop.online.
+ * - Online toggle remains in header (top-right) and updates server.
+ * - Customers are expected to be filtered by `online` on the server-side (ShopManager).
  *
- * All interactions are inline (no prompt/alert).
+ * Replace the existing file with this version.
  */
 
 export default function OwnerDashboard() {
@@ -322,62 +320,56 @@ export default function OwnerDashboard() {
         {/* Main area */}
         <main className="col-span-9">
           {/* header: centered shop name & pincode */}
-<div className="flex flex-col items-center justify-center mb-4 relative">
-  {selectedShop && (
-    <div className="absolute right-0 top-0 flex items-center gap-2">
-      <label className="flex items-center gap-2 cursor-pointer">
-        <input
-          type="checkbox"
-          checked={!!selectedShop.online}
-          onChange={async (e) => {
-            const newVal = e.target.checked;
-            setShopMsg("Updating...");
-            // Optimistic UI
-            setSelectedShop(prev => prev ? ({ ...prev, online: newVal }) : prev);
-            try {
-              const res = await apiFetch(`/api/shops/${selectedShop._id}`, {
-                method: "PATCH",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ online: newVal }),
-              });
-              if (!res.ok) {
-                const txt = await res.text();
-                throw new Error(txt || "Failed to update");
-              }
-              await res.json();
-              setShopMsg(newVal ? "Shop is now Online" : "Shop is now Offline");
-              await loadShops();
-            } catch (err) {
-              console.error("toggle online error", err);
-              setShopMsg("Failed to change status");
-              setSelectedShop(prev => prev ? ({ ...prev, online: !newVal }) : prev);
-            }
-          }}
-          className="h-4 w-4 rounded border-gray-300"
-        />
-        <span
-          className={`px-2 py-1 rounded text-xs ${
-            selectedShop.online
-              ? "bg-green-100 text-green-800"
-              : "bg-red-100 text-red-800"
-          }`}
-        >
-          {selectedShop.online ? "Online" : "Offline"}
-        </span>
-      </label>
-    </div>
-  )}
+          <div className="flex flex-col items-center justify-center mb-4 relative">
+            {selectedShop && (
+              <div className="absolute right-0 top-0 flex items-center gap-2">
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={!!selectedShop.online}
+                    onChange={async (e) => {
+                      const newVal = e.target.checked;
+                      setShopMsg("Updating...");
+                      // Optimistic UI
+                      setSelectedShop(prev => prev ? ({ ...prev, online: newVal }) : prev);
+                      try {
+                        const res = await apiFetch(`/api/shops/${selectedShop._id}`, {
+                          method: "PATCH",
+                          headers: { "Content-Type": "application/json" },
+                          body: JSON.stringify({ online: newVal }),
+                        });
+                        if (!res.ok) {
+                          const txt = await res.text();
+                          throw new Error(txt || "Failed to update");
+                        }
+                        await res.json();
+                        setShopMsg(newVal ? "Shop is now Online" : "Shop is now Offline");
+                        await loadShops();
+                      } catch (err) {
+                        console.error("toggle online error", err);
+                        setShopMsg("Failed to change status");
+                        setSelectedShop(prev => prev ? ({ ...prev, online: !newVal }) : prev);
+                      }
+                    }}
+                    className="h-4 w-4 rounded border-gray-300"
+                  />
+                  <span
+                    className={`px-2 py-1 rounded text-xs ${
+                      selectedShop.online ? "bg-green-100 text-green-800" : "bg-red-100 text-red-800"
+                    }`}
+                  >
+                    {selectedShop.online ? "Online" : "Offline"}
+                  </span>
+                </label>
+              </div>
+            )}
 
-  <div className="text-lg font-semibold">
-    {selectedShop ? selectedShop.name : "Shop Name"}
-  </div>
+            <div className="text-lg font-semibold">{selectedShop ? selectedShop.name : "Shop Name"}</div>
 
-  <div className="text-sm text-gray-500">
-    {selectedShop
-      ? `${selectedShop.address || ""}${selectedShop.pincode ? " • " + selectedShop.pincode : ""}`
-      : "Address • Pincode"}
-  </div>
-</div>
+            <div className="text-sm text-gray-500">
+              {selectedShop ? `${selectedShop.address || ""}${selectedShop.pincode ? " • " + selectedShop.pincode : ""}` : "Address • Pincode"}
+            </div>
+          </div>
 
           {/* top inline messages */}
           {(msg || shopMsg || itemMsg || orderMsg) && (
@@ -444,10 +436,7 @@ export default function OwnerDashboard() {
               <>
                 {/* inline add/edit form at top-right (we center container and right-align the form) */}
                 <div className="flex justify-end mb-4">
-                  <form
-                    onSubmit={submitItem}
-                    className={`flex items-center gap-2 ${!selectedShop?.online ? "opacity-50 pointer-events-none" : ""}`}
-                  >
+                  <form onSubmit={submitItem} className="flex items-center gap-2">
                     <input value={itemForm.name} onChange={e => setItemForm(prev => ({ ...prev, name: e.target.value }))} placeholder="Item name" className="p-2 border rounded" />
                     <input value={itemForm.price} onChange={e => setItemForm(prev => ({ ...prev, price: e.target.value }))} placeholder="Price" type="number" className="p-2 border rounded w-28" />
                     <button type="submit" className="px-3 py-2 bg-green-600 text-white rounded">{itemForm._editingId ? "Save" : "Add"}</button>
@@ -470,7 +459,7 @@ export default function OwnerDashboard() {
                           <div className="text-xs text-gray-500">{it.available ? "Available" : "Unavailable"}</div>
                         </div>
 
-                        <div className={`flex items-center gap-2 ${!selectedShop?.online ? "opacity-50 pointer-events-none" : ""}`}>
+                        <div className="flex items-center gap-2">
                           <button onClick={() => toggleAvailability(it)} className={`px-3 py-1 rounded text-sm ${it.available ? "bg-green-100 text-green-800" : "bg-gray-200 text-gray-700"}`}>
                             {it.available ? "Enabled" : "Disabled"}
                           </button>
@@ -513,14 +502,14 @@ export default function OwnerDashboard() {
                             <div className="text-sm text-gray-600">₹{o.total}</div>
                           </div>
 
-                          <div className={`flex flex-col items-end gap-2 ${!selectedShop?.online ? "opacity-50 pointer-events-none" : ""}`}>
+                          <div className="flex flex-col items-end gap-2">
                             <div className="text-sm">Customer: <b>{o.customerName}</b></div>
                             <div className="flex gap-2">
-                              <button onClick={() => updateOrderStatus(o._id, "accepted")} disabled={!selectedShop?.online || status !== "received"} className={`px-3 py-1 rounded ${status === "received" ? "bg-blue-600 text-white" : "bg-gray-200 text-gray-600"}`}>Accept</button>
-                              <button onClick={() => updateOrderStatus(o._id, "packed")} disabled={!selectedShop?.online || status !== "accepted"} className={`px-3 py-1 rounded ${status === "accepted" ? "bg-yellow-500 text-white" : "bg-gray-200 text-gray-600"}`}>Packed</button>
-                              <button onClick={() => updateOrderStatus(o._id, "out-for-delivery")} disabled={!selectedShop?.online || status !== "packed"} className={`px-3 py-1 rounded ${status === "packed" ? "bg-indigo-600 text-white" : "bg-gray-200 text-gray-600"}`}>Out for delivery</button>
-                              <button onClick={() => updateOrderStatus(o._id, "delivered")} disabled={!selectedShop?.online || status !== "out-for-delivery"} className={`px-3 py-1 rounded ${status === "out-for-delivery" ? "bg-green-600 text-white" : "bg-gray-200 text-gray-600"}`}>Delivered</button>
-                              <button onClick={() => updateOrderStatus(o._id, "cancelled")} disabled={!selectedShop?.online || status === "delivered" || status === "cancelled"} className={`px-3 py-1 rounded ${status === "cancelled" ? "bg-gray-400 text-white" : "bg-red-500 text-white"}`}>Cancel</button>
+                              <button onClick={() => updateOrderStatus(o._id, "accepted")} disabled={status !== "received"} className={`px-3 py-1 rounded ${status === "received" ? "bg-blue-600 text-white" : "bg-gray-200 text-gray-600"}`}>Accept</button>
+                              <button onClick={() => updateOrderStatus(o._id, "packed")} disabled={status !== "accepted"} className={`px-3 py-1 rounded ${status === "accepted" ? "bg-yellow-500 text-white" : "bg-gray-200 text-gray-600"}`}>Packed</button>
+                              <button onClick={() => updateOrderStatus(o._id, "out-for-delivery")} disabled={status !== "packed"} className={`px-3 py-1 rounded ${status === "packed" ? "bg-indigo-600 text-white" : "bg-gray-200 text-gray-600"}`}>Out for delivery</button>
+                              <button onClick={() => updateOrderStatus(o._id, "delivered")} disabled={status !== "out-for-delivery"} className={`px-3 py-1 rounded ${status === "out-for-delivery" ? "bg-green-600 text-white" : "bg-gray-200 text-gray-600"}`}>Delivered</button>
+                              <button onClick={() => updateOrderStatus(o._1d, "cancelled")} disabled={status === "delivered" || status === "cancelled"} className={`px-3 py-1 rounded ${status === "cancelled" ? "bg-gray-400 text-white" : "bg-red-500 text-white"}`}>Cancel</button>
                             </div>
                           </div>
                         </div>
