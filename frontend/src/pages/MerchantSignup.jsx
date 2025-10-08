@@ -7,31 +7,17 @@ const API_BASE = getApiBase();
 
 export default function MerchantSignup() {
   const navigate = useNavigate();
-  const [form, setForm] = useState({
-    name: "",
-    email: "",
-    password: "",
-  });
-
-  // optional create shop
-const [shop, setShop] = useState({
-  name: "",
-  phone: "",
-  address: "",
-  description: "",
-  pincode: "",
-});
-
+  const [form, setForm] = useState({ name: "", email: "", password: "" });
+  const [shop, setShop] = useState({ name: "", phone: "", address: "", description: "", pincode: "" });
   const [loading, setLoading] = useState(false);
 
   function onChange(e) {
     const { name, value } = e.target;
-    setForm(f => ({ ...f, [name]: value }));
+    setForm((f) => ({ ...f, [name]: value }));
   }
-
   function onShopChange(e) {
     const { name, value } = e.target;
-    setShop(s => ({ ...s, [name]: value }));
+    setShop((s) => ({ ...s, [name]: value }));
   }
 
   async function tryAutoLogin(email, password) {
@@ -46,7 +32,6 @@ const [shop, setShop] = useState({
         throw new Error(txt || `status:${res.status}`);
       }
       const data = await res.json();
-      // server returns { token, userId } on merchant-login
       if (data.token) {
         localStorage.setItem("merchant_token", data.token);
         return true;
@@ -59,62 +44,49 @@ const [shop, setShop] = useState({
   }
 
   async function submit(e) {
-  e.preventDefault();
+    e.preventDefault();
+    if (!form.name || !form.email || !form.password) return alert("Name, email and password are required");
+    if (!shop.name || !shop.phone || !shop.address || !shop.pincode) return alert("Shop name, phone, address and pincode are required");
 
-  if (!form.name || !form.email || !form.password) {
-    return alert("Name, email and password are required");
-  }
+    setLoading(true);
+    try {
+      const payload = {
+        name: form.name,
+        email: form.email,
+        password: form.password,
+        createShop: {
+          name: shop.name,
+          phone: shop.phone,
+          address: shop.address,
+          description: shop.description || "",
+          pincode: shop.pincode || "",
+        },
+      };
 
-  // always require shop creation
-  if (!shop.name || !shop.phone || !shop.address || !shop.pincode) {
-    return alert("Shop name, phone, address, and pincode are required");
-  }
+      const res = await fetch(`${API_BASE}/auth/signup`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) {
+        const txt = await res.text();
+        throw new Error(txt || `${res.status}`);
+      }
+      const data = await res.json();
 
-  setLoading(true);
-  try {
-    const payload = {
-      name: form.name,
-      email: form.email,
-      password: form.password,
-      createShop: {
-        name: shop.name,
-        phone: shop.phone,
-        address: shop.address,
-        description: shop.description || "",
-        pincode: shop.pincode || "",
-      },
-    };
-
-    // 1) Signup
-    const res = await fetch(`${API_BASE}/auth/signup`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-
-    if (!res.ok) {
-      const txt = await res.text();
-      throw new Error(txt || `${res.status}`);
+      const loggedIn = await tryAutoLogin(form.email, form.password);
+      if (loggedIn) navigate("/owner-dashboard");
+      else {
+        alert("Signup successful, but auto-login failed — please login manually.");
+        navigate("/merchant-login");
+      }
+    } catch (err) {
+      console.error("Signup failed", err);
+      alert("Signup failed: " + (err.message || err));
+    } finally {
+      setLoading(false);
     }
-
-    const data = await res.json();
-
-    // 2) Try auto-login immediately using same email/password
-    const loggedIn = await tryAutoLogin(form.email, form.password);
-    if (loggedIn) {
-      navigate("/owner-dashboard");
-    } else {
-      alert("Signup successful, but auto-login failed — please login manually.");
-      navigate("/merchant-login");
-    }
-  } catch (err) {
-    console.error("Signup failed", err);
-    alert("Signup failed: " + (err.message || err));
-  } finally {
-    setLoading(false);
   }
-}
-
 
   return (
     <div className="min-h-screen p-6 bg-gray-50">
@@ -137,32 +109,31 @@ const [shop, setShop] = useState({
           </label>
 
           <div className="mb-4 border p-3 rounded bg-gray-50">
-  <label className="block mb-2">
-    <div className="text-sm text-gray-600">Shop name</div>
-    <input name="name" value={shop.name} onChange={onShopChange} className="w-full p-2 border rounded" />
-  </label>
+            <label className="block mb-2">
+              <div className="text-sm text-gray-600">Shop name</div>
+              <input name="name" value={shop.name} onChange={onShopChange} className="w-full p-2 border rounded" />
+            </label>
 
-  <label className="block mb-2">
-    <div className="text-sm text-gray-600">Shop phone</div>
-    <input name="phone" value={shop.phone} onChange={onShopChange} className="w-full p-2 border rounded" />
-  </label>
+            <label className="block mb-2">
+              <div className="text-sm text-gray-600">Shop phone</div>
+              <input name="phone" value={shop.phone} onChange={onShopChange} className="w-full p-2 border rounded" />
+            </label>
 
-  <label className="block mb-2">
-    <div className="text-sm text-gray-600">Shop address</div>
-    <input name="address" value={shop.address} onChange={onShopChange} className="w-full p-2 border rounded" />
-  </label>
+            <label className="block mb-2">
+              <div className="text-sm text-gray-600">Shop address</div>
+              <input name="address" value={shop.address} onChange={onShopChange} className="w-full p-2 border rounded" />
+            </label>
 
-  <label className="block mb-2">
-    <div className="text-sm text-gray-600">Pincode</div>
-    <input name="pincode" value={shop.pincode} onChange={onShopChange} className="w-full p-2 border rounded" />
-  </label>
+            <label className="block mb-2">
+              <div className="text-sm text-gray-600">Pincode</div>
+              <input name="pincode" value={shop.pincode} onChange={onShopChange} className="w-full p-2 border rounded" />
+            </label>
 
-  <label className="block">
-    <div className="text-sm text-gray-600">Short description (optional)</div>
-    <input name="description" value={shop.description} onChange={onShopChange} className="w-full p-2 border rounded" />
-  </label>
-</div>
-
+            <label className="block">
+              <div className="text-sm text-gray-600">Short description (optional)</div>
+              <input name="description" value={shop.description} onChange={onShopChange} className="w-full p-2 border rounded" />
+            </label>
+          </div>
 
           <div className="flex items-center justify-between">
             <button disabled={loading} type="submit" className="px-4 py-2 bg-blue-600 text-white rounded">
