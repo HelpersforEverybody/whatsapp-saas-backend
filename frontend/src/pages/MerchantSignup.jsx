@@ -59,69 +59,62 @@ const [shop, setShop] = useState({
   }
 
   async function submit(e) {
-    e.preventDefault();
-    if (!form.name || !form.email || !form.password) {
-      return alert("Name, email and password are required");
+  e.preventDefault();
+
+  if (!form.name || !form.email || !form.password) {
+    return alert("Name, email and password are required");
+  }
+
+  // always require shop creation
+  if (!shop.name || !shop.phone || !shop.address || !shop.pincode) {
+    return alert("Shop name, phone, address, and pincode are required");
+  }
+
+  setLoading(true);
+  try {
+    const payload = {
+      name: form.name,
+      email: form.email,
+      password: form.password,
+      createShop: {
+        name: shop.name,
+        phone: shop.phone,
+        address: shop.address,
+        description: shop.description || "",
+        pincode: shop.pincode || "",
+      },
+    };
+
+    // 1) Signup
+    const res = await fetch(`${API_BASE}/auth/signup`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+
+    if (!res.ok) {
+      const txt = await res.text();
+      throw new Error(txt || `${res.status}`);
     }
 
-   // always require shop creation
-if (!shop.name || !shop.phone || !shop.address || !shop.pincode) {
-  return alert("Shop name, phone, address, and pincode are required");
+    const data = await res.json();
+
+    // 2) Try auto-login immediately using same email/password
+    const loggedIn = await tryAutoLogin(form.email, form.password);
+    if (loggedIn) {
+      navigate("/owner-dashboard");
+    } else {
+      alert("Signup successful, but auto-login failed — please login manually.");
+      navigate("/merchant-login");
+    }
+  } catch (err) {
+    console.error("Signup failed", err);
+    alert("Signup failed: " + (err.message || err));
+  } finally {
+    setLoading(false);
+  }
 }
 
-      // basic phone digits check (allow + and digits)
-      const digits = String(shop.phone).replace(/[^\d+]/g, "");
-      if (!/^\+?\d{10,15}$/.test(digits)) {
-        return alert("Shop phone looks invalid (use 10-15 digits, optional +)");
-      }
-    }
-
-    setLoading(true);
-    try {
-      const payload = {
-        name: form.name,
-        email: form.email,
-        password: form.password,
-        createShop : {
-          name: shop.name,
-          phone: shop.phone,
-          description: shop.description || "",
-          pincode: shop.pincode || "",
-        };
-      }
-
-      // 1) Signup
-      const res = await fetch(`${API_BASE}/auth/signup`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-
-      if (!res.ok) {
-        const txt = await res.text();
-        throw new Error(txt || `${res.status}`);
-      }
-
-      const data = await res.json();
-      // server returns { userId, shopId? }
-
-      // 2) Try auto-login immediately using same email/password
-      const loggedIn = await tryAutoLogin(form.email, form.password);
-      if (loggedIn) {
-        // redirect to owner dashboard
-        navigate("/owner-dashboard");
-      } else {
-        // fallback: inform user and redirect to login page
-        alert("Signup successful, but auto-login failed — please login manually.");
-        navigate("/merchant-login");
-      }
-    } catch (err) {
-      console.error("Signup failed", err);
-      alert("Signup failed: " + (err.message || err));
-    } finally {
-      setLoading(false);
-    }
-  }
 
   return (
     <div className="min-h-screen p-6 bg-gray-50">
