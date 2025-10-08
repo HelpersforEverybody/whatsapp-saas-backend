@@ -63,16 +63,18 @@ userSchema.methods.verifyPassword = function (plain) {
 };
 const User = mongoose.models.User || mongoose.model('User', userSchema);
 
-// Shop - includes lastOrderNumber for per-shop numeric orders and pincode
 const shopSchema = new mongoose.Schema({
   name: { type: String, required: true },
   phone: { type: String, required: true, unique: true },
   description: String,
+  address: { type: String, required: true },   // ✅ NEW FIELD
   owner: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
-  lastOrderNumber: { type: Number, default: 0 }, // per-shop incremental order numbers
-  pincode: { type: String, default: '' }, // store postal pincode as string (e.g. "560001")
+  lastOrderNumber: { type: Number, default: 0 },
+  pincode: { type: String, required: true },   // ✅ make required now
+  online: { type: Boolean, default: true },    // ✅ NEW FIELD
   createdAt: { type: Date, default: Date.now },
 });
+
 shopSchema.index({ pincode: 1 });
 const Shop = mongoose.models.Shop || mongoose.model('Shop', shopSchema);
 
@@ -217,13 +219,19 @@ app.post('/auth/signup', async (req, res) => {
     const hash = bcrypt.hashSync(String(password), saltRounds);
     const user = await User.create({ name, email: email.toLowerCase(), passwordHash: hash });
     let shop = null;
-    if (createShop && createShop.name && createShop.phone) {
-      shop = await Shop.create({ 
-        name: createShop.name, 
-        phone: createShop.phone, 
-        description: createShop.description || '', 
+        if (createShop) {
+      const { name: shopName, phone, description, pincode, address } = createShop;
+      if (!shopName || !phone || !pincode || !address) {
+        return res.status(400).json({ error: 'shop name, phone, address, and pincode are required' });
+      }
+      shop = await Shop.create({
+        name: shopName,
+        phone,
+        description: description || '',
+        address,
+        pincode: pincode.toString(),
+        online: true,
         owner: user._id,
-        pincode: (createShop.pincode || '').toString()
       });
     }
     return res.status(201).json({ userId: user._id, shopId: shop ? shop._id : null });
@@ -351,13 +359,12 @@ app.post('/api/shops', requireOwner, async (req, res) => {
 });
 
 // List all shops (public) - supports pincode filter
+// Public list: only show online shops, filter by pincode if provided
 app.get('/api/shops', async (req, res) => {
   try {
     const { pincode } = req.query;
-    let q = {};
-    if (pincode) {
-      q.pincode = String(pincode).trim();
-    }
+    let q = { online: true };
+    if (pincode) q.pincode = String(pincode).trim();
     const shops = await Shop.find(q).select('-__v').lean();
     res.json(shops);
   } catch (err) {
@@ -419,6 +426,21 @@ app.delete('/api/shops/:shopId/items/:itemId', requireOwner, async (req, res) =>
     res.status(500).json({ error: 'failed' });
   }
 });
+// Toggle shop online/offline (owner only)
+app.put('/api/shops/:shopId/status', requireOwner, async (req, res) => {
+  try {
+    const { online } = req.body;
+    const shop = await Shop.findById(req.params.shopId);
+    if (!shop) return res.status(404).json({ error: 'shop not found' });
+    shop.online = Boolean(online);
+    await shop.save();
+    res.json({ ok: true, shop });
+  } catch (err) {
+    console.error('Toggle shop status error:', err);
+    res.status(500).json({ error: 'failed to toggle status' });
+  }
+});
+
 
 // List menu (public)
 app.get('/api/shops/:shopId/menu', async (req, res) => {
