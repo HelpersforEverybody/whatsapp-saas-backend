@@ -14,13 +14,13 @@ export default function MerchantSignup() {
   });
 
   // optional create shop
-  const [createShopNow, setCreateShopNow] = useState(false);
-  const [shop, setShop] = useState({
-    name: "",
-    phone: "",
-    description: "",
-    pincode: "",
-  });
+const [shop, setShop] = useState({
+  name: "",
+  phone: "",
+  address: "",
+  description: "",
+  pincode: "",
+});
 
   const [loading, setLoading] = useState(false);
 
@@ -64,11 +64,11 @@ export default function MerchantSignup() {
       return alert("Name, email and password are required");
     }
 
-    // validate optional phone (if createShopNow)
-    if (createShopNow) {
-      if (!shop.name || !shop.phone) {
-        return alert("Shop name and phone are required to create a shop now");
-      }
+   // always require shop creation
+if (!shop.name || !shop.phone || !shop.address || !shop.pincode) {
+  return alert("Shop name, phone, address, and pincode are required");
+}
+
       // basic phone digits check (allow + and digits)
       const digits = String(shop.phone).replace(/[^\d+]/g, "");
       if (!/^\+?\d{10,15}$/.test(digits)) {
@@ -82,9 +82,7 @@ export default function MerchantSignup() {
         name: form.name,
         email: form.email,
         password: form.password,
-      };
-      if (createShopNow) {
-        payload.createShop = {
+        createShop : {
           name: shop.name,
           phone: shop.phone,
           description: shop.description || "",
@@ -145,34 +143,33 @@ export default function MerchantSignup() {
             <input name="password" value={form.password} onChange={onChange} type="password" className="w-full p-2 border rounded" />
           </label>
 
-          <label className="flex items-center gap-2 mb-3">
-            <input type="checkbox" checked={createShopNow} onChange={() => setCreateShopNow(s => !s)} />
-            <span>Create a shop now (optional)</span>
-          </label>
+          <div className="mb-4 border p-3 rounded bg-gray-50">
+  <label className="block mb-2">
+    <div className="text-sm text-gray-600">Shop name</div>
+    <input name="name" value={shop.name} onChange={onShopChange} className="w-full p-2 border rounded" />
+  </label>
 
-          {createShopNow && (
-            <div className="mb-4 border p-3 rounded bg-gray-50">
-              <label className="block mb-2">
-                <div className="text-sm text-gray-600">Shop name</div>
-                <input name="name" value={shop.name} onChange={onShopChange} className="w-full p-2 border rounded" />
-              </label>
+  <label className="block mb-2">
+    <div className="text-sm text-gray-600">Shop phone</div>
+    <input name="phone" value={shop.phone} onChange={onShopChange} className="w-full p-2 border rounded" />
+  </label>
 
-              <label className="block mb-2">
-                <div className="text-sm text-gray-600">Shop phone (use +91XXXXXXXXXX or local 10 digits)</div>
-                <input name="phone" value={shop.phone} onChange={onShopChange} className="w-full p-2 border rounded" />
-              </label>
+  <label className="block mb-2">
+    <div className="text-sm text-gray-600">Shop address</div>
+    <input name="address" value={shop.address} onChange={onShopChange} className="w-full p-2 border rounded" />
+  </label>
 
-              <label className="block mb-2">
-                <div className="text-sm text-gray-600">Pincode (optional)</div>
-                <input name="pincode" value={shop.pincode} onChange={onShopChange} className="w-full p-2 border rounded" />
-              </label>
+  <label className="block mb-2">
+    <div className="text-sm text-gray-600">Pincode</div>
+    <input name="pincode" value={shop.pincode} onChange={onShopChange} className="w-full p-2 border rounded" />
+  </label>
 
-              <label className="block">
-                <div className="text-sm text-gray-600">Short description (optional)</div>
-                <input name="description" value={shop.description} onChange={onShopChange} className="w-full p-2 border rounded" />
-              </label>
-            </div>
-          )}
+  <label className="block">
+    <div className="text-sm text-gray-600">Short description (optional)</div>
+    <input name="description" value={shop.description} onChange={onShopChange} className="w-full p-2 border rounded" />
+  </label>
+</div>
+
 
           <div className="flex items-center justify-between">
             <button disabled={loading} type="submit" className="px-4 py-2 bg-blue-600 text-white rounded">
