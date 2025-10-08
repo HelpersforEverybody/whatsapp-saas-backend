@@ -536,4 +536,37 @@ export default function OwnerDashboard() {
                         </div>
                         <div className="flex gap-2">
                           <button
-                            on
+                            onClick={() => toggleAvailability(it)}
+                            className={`px-2 py-1 rounded text-sm ${
+                              it.available
+                                ? "bg-green-100 text-green-700"
+                                : "bg-gray-200 text-gray-600"
+                            }`}
+                          >
+                            {it.available ? "Available" : "Hidden"}
+                          </button>
+                          <button
+                            onClick={() => editItem(it)}
+                            className="px-2 py-1 bg-blue-500 text-white rounded text-sm"
+                          >
+                            Edit
+                          </button>
+                          <button
+                            onClick={() => deleteItem(it)}
+                            className="px-2 py-1 bg-red-500 text-white rounded text-sm"
+                          >
+                            Delete
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
