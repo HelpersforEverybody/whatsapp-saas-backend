@@ -4,33 +4,46 @@ import { apiFetch, getApiBase } from "../hooks/useApi";
 import { useNavigate } from "react-router-dom";
 
 /**
- * OwnerDashboard
- * - Inline shop edit in sidebar when clicking "Your Shop"
- * - Inline Add Item form in main area when "menu" tab active and "add menu" clicked
- * - Add menu disappears when "order" tab selected
- * - No alerts/prompts: inline messages only
- * - Uses default (neutral) Tailwind look
+ * OwnerDashboard — view-mode layout:
+ * - Sidebar (Your Shop / Menu / Order) left
+ * - Main area right: shows ONLY the active view
+ *   - your-shop -> inline shop edit panel in the main area (tabs hidden)
+ *   - menu -> inline add/edit form (top-right) + menu list
+ *   - order -> orders list (add/edit form hidden)
+ *
+ * All interactions are inline (no prompt/alert).
  */
 
 export default function OwnerDashboard() {
   const API_BASE = getApiBase();
   const navigate = useNavigate();
 
+  // data
   const [shops, setShops] = useState([]);
   const [selectedShop, setSelectedShop] = useState(null);
-  const [orders, setOrders] = useState([]);
   const [menu, setMenu] = useState([]);
-  const [newItem, setNewItem] = useState({ name: "", price: "" });
+  const [orders, setOrders] = useState([]);
 
+  // UI / form state
+  const [activeView, setActiveView] = useState("menu"); // "your-shop" | "menu" | "order"
   const [loading, setLoading] = useState(false);
-  const [activeTab, setActiveTab] = useState("menu"); // default to menu
-  const [sidebarMode, setSidebarMode] = useState(null); // 'view'|'edit' - controlled by clicking Your Shop button
-  const [shopForm, setShopForm] = useState({ name: "", phone: "", address: "", pincode: "" });
-  const [msg, setMsg] = useState(""); // global inline message
-  const [shopMsg, setShopMsg] = useState("");
-  const [itemMsg, setItemMsg] = useState("");
 
-  // load shops for merchant
+  // shop edit form (used in "your-shop" view)
+  const [shopForm, setShopForm] = useState({ name: "", phone: "", address: "", pincode: "" });
+  const [shopMsg, setShopMsg] = useState("");
+
+  // add/edit item form (only visible in "menu" view)
+  const [itemForm, setItemForm] = useState({ name: "", price: "", _editingId: null });
+  const [itemMsg, setItemMsg] = useState("");
+  const [deletingItemId, setDeletingItemId] = useState(null); // inline confirm for delete
+
+  // order messages
+  const [orderMsg, setOrderMsg] = useState("");
+
+  // generic top message
+  const [msg, setMsg] = useState("");
+
+  // load merchant shops
   async function loadShops() {
     setLoading(true);
     setMsg("");
@@ -40,15 +53,15 @@ export default function OwnerDashboard() {
       const data = await res.json();
       setShops(data || []);
       if (data && data.length) {
-        // preserve selection when possible
+        // keep previous selection when possible
         const found = selectedShop ? data.find(s => s._id === selectedShop._id) : data[0];
         setSelectedShop(found || data[0]);
       } else {
         setSelectedShop(null);
       }
-    } catch (e) {
-      console.error("loadShops", e);
-      setMsg("Failed to load shops. Please re-login.");
+    } catch (err) {
+      console.error("loadShops", err);
+      setMsg("Failed to load shops. Re-login if needed.");
       const token = localStorage.getItem("merchant_token");
       if (!token) navigate("/merchant-login");
     } finally {
@@ -57,33 +70,34 @@ export default function OwnerDashboard() {
   }
 
   async function loadMenuForShop(shopId) {
-    setMsg("");
+    setItemMsg("");
     try {
       if (!shopId) { setMenu([]); return; }
       const res = await fetch(`${API_BASE}/api/shops/${shopId}/menu`);
       if (!res.ok) throw new Error("Failed to load menu");
       const data = await res.json();
       setMenu(data || []);
-    } catch (e) {
-      console.error("loadMenuForShop", e);
+    } catch (err) {
+      console.error("loadMenuForShop", err);
       setMsg("Failed to load menu");
     }
   }
 
   async function loadOrdersForShop(shopId) {
-    setMsg("");
+    setOrderMsg("");
     try {
       if (!shopId) { setOrders([]); return; }
       const res = await apiFetch(`/api/shops/${shopId}/orders`);
       if (!res.ok) throw new Error("Failed to load orders");
       const data = await res.json();
       setOrders(data || []);
-    } catch (e) {
-      console.error("loadOrdersForShop", e);
+    } catch (err) {
+      console.error("loadOrdersForShop", err);
       setMsg("Failed to load orders");
     }
   }
 
+  // initial
   useEffect(() => {
     const token = localStorage.getItem("merchant_token");
     if (!token) { navigate("/merchant-login"); return; }
@@ -91,9 +105,9 @@ export default function OwnerDashboard() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // when selected shop changes populate shopForm and reload content
   useEffect(() => {
-    if (selectedShop && selectedShop._id) {
-      // populate shop form for inline edit
+    if (selectedShop) {
       setShopForm({
         name: selectedShop.name || "",
         phone: selectedShop.phone || "",
@@ -103,8 +117,9 @@ export default function OwnerDashboard() {
       loadMenuForShop(selectedShop._id);
       loadOrdersForShop(selectedShop._id);
     } else {
-      setMenu([]); setOrders([]);
       setShopForm({ name: "", phone: "", address: "", pincode: "" });
+      setMenu([]);
+      setOrders([]);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedShop]);
@@ -114,27 +129,9 @@ export default function OwnerDashboard() {
     navigate("/merchant-login");
   }
 
-  // inline shop edit handlers
-  function openShopEdit() {
-    setSidebarMode("edit");
-    setShopMsg("");
-  }
-  function closeShopEdit() {
-    setSidebarMode("view");
-    setShopMsg("");
-    // revert form to selectedShop
-    if (selectedShop) {
-      setShopForm({
-        name: selectedShop.name || "",
-        phone: selectedShop.phone || "",
-        address: selectedShop.address || "",
-        pincode: selectedShop.pincode || "",
-      });
-    }
-  }
-
-  async function saveShopDetails(e) {
-    e.preventDefault();
+  // ---- Shop edit (your-shop) ----
+  async function saveShop(e) {
+    e && e.preventDefault();
     setShopMsg("");
     if (!selectedShop) { setShopMsg("No shop selected"); return; }
     const { name, phone, address, pincode } = shopForm;
@@ -147,47 +144,81 @@ export default function OwnerDashboard() {
       });
       if (!res.ok) {
         const txt = await res.text();
-        throw new Error(txt || "Failed to save shop");
+        throw new Error(txt || "Save failed");
       }
       setShopMsg("Saved");
       await loadShops();
-      setSidebarMode("view");
     } catch (err) {
-      console.error("saveShopDetails", err);
+      console.error("saveShop", err);
       setShopMsg("Error: " + (err.message || err));
     }
   }
 
-  // Add item inline (only visible when menu tab is active)
-  async function addItem(e) {
-    e.preventDefault();
+  // ---- Menu: add / edit ----
+  async function submitItem(e) {
+    e && e.preventDefault();
     setItemMsg("");
     if (!selectedShop) { setItemMsg("Select a shop first"); return; }
-    if (!newItem.name) { setItemMsg("Item name required"); return; }
+    if (!itemForm.name) { setItemMsg("Item name required"); return; }
     try {
-      const res = await apiFetch(`/api/shops/${selectedShop._id}/items`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: newItem.name, price: Number(newItem.price || 0) }),
-      });
-      if (!res.ok) {
-        const txt = await res.text();
-        throw new Error(txt || "Failed to add item");
+      if (itemForm._editingId) {
+        // edit existing
+        const res = await apiFetch(`/api/shops/${selectedShop._id}/items/${itemForm._editingId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name: itemForm.name, price: Number(itemForm.price || 0) }),
+        });
+        if (!res.ok) {
+          const txt = await res.text();
+          throw new Error(txt || "Edit failed");
+        }
+        setItemMsg("Item updated");
+        setItemForm({ name: "", price: "", _editingId: null });
+      } else {
+        // create
+        const res = await apiFetch(`/api/shops/${selectedShop._id}/items`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name: itemForm.name, price: Number(itemForm.price || 0) }),
+        });
+        if (!res.ok) {
+          const txt = await res.text();
+          throw new Error(txt || "Add failed");
+        }
+        setItemMsg("Item added");
+        setItemForm({ name: "", price: "", _editingId: null });
       }
-      setItemMsg("Item added");
-      setNewItem({ name: "", price: "" });
       await loadMenuForShop(selectedShop._id);
-      setActiveTab("menu");
     } catch (err) {
-      console.error("addItem", err);
+      console.error("submitItem", err);
       setItemMsg("Error: " + (err.message || err));
     }
   }
 
-  // toggle menu item availability
+  function startEditItem(item) {
+    setItemMsg("");
+    setItemForm({ name: item.name, price: String(item.price || ""), _editingId: item._id });
+  }
+
+  async function confirmDeleteItem(itemId) {
+    setItemMsg("");
+    try {
+      const res = await apiFetch(`/api/shops/${selectedShop._id}/items/${itemId}`, { method: "DELETE" });
+      if (!res.ok) {
+        const txt = await res.text();
+        throw new Error(txt || "Delete failed");
+      }
+      setItemMsg("Deleted");
+      setDeletingItemId(null);
+      await loadMenuForShop(selectedShop._id);
+    } catch (err) {
+      console.error("confirmDeleteItem", err);
+      setItemMsg("Error deleting: " + (err.message || err));
+    }
+  }
+
   async function toggleAvailability(item) {
     setItemMsg("");
-    if (!selectedShop) { setItemMsg("Select a shop"); return; }
     try {
       const res = await apiFetch(`/api/shops/${selectedShop._id}/items/${item._id}`, {
         method: "PATCH",
@@ -201,63 +232,15 @@ export default function OwnerDashboard() {
       await loadMenuForShop(selectedShop._id);
     } catch (err) {
       console.error("toggleAvailability", err);
-      setItemMsg("Error toggling item: " + (err.message || err));
-    }
-  }
-
-  async function editItem(item) {
-    setItemMsg("");
-    // show simple inline edit (reuse newItem area temporarily)
-    setNewItem({ name: item.name, price: String(item.price || 0), _editingId: item._id });
-  }
-
-  async function saveEditedItem(e) {
-    e.preventDefault();
-    setItemMsg("");
-    if (!selectedShop) { setItemMsg("Select shop first"); return; }
-    const id = newItem._editingId;
-    if (!id) { setItemMsg("No item selected to edit"); return; }
-    if (!newItem.name) { setItemMsg("Item name required"); return; }
-    try {
-      const res = await apiFetch(`/api/shops/${selectedShop._id}/items/${id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: newItem.name, price: Number(newItem.price || 0) }),
-      });
-      if (!res.ok) {
-        const txt = await res.text();
-        throw new Error(txt || "Edit failed");
-      }
-      setItemMsg("Item updated");
-      setNewItem({ name: "", price: "" });
-      await loadMenuForShop(selectedShop._id);
-    } catch (err) {
-      console.error("saveEditedItem", err);
       setItemMsg("Error: " + (err.message || err));
     }
   }
 
-  async function deleteItem(item) {
-    setItemMsg("");
-    if (!selectedShop) { setItemMsg("Select shop first"); return; }
-    try {
-      const res = await apiFetch(`/api/shops/${selectedShop._id}/items/${item._id}`, { method: "DELETE" });
-      if (!res.ok) {
-        const txt = await res.text();
-        throw new Error(txt || "Delete failed");
-      }
-      setItemMsg("Deleted");
-      await loadMenuForShop(selectedShop._id);
-    } catch (err) {
-      console.error("deleteItem", err);
-      setItemMsg("Error deleting item: " + (err.message || err));
-    }
-  }
-
-  // orders
+  // ---- Orders ----
   async function updateOrderStatus(orderId, newStatus) {
-    setMsg("");
-    setOrders(prev => prev.map(o => (o._id === orderId ? { ...o, status: newStatus } : o)));
+    setOrderMsg("");
+    // optimistic UI
+    setOrders(prev => prev.map(o => o._id === orderId ? { ...o, status: newStatus } : o));
     try {
       const res = await apiFetch(`/api/orders/${orderId}/status`, {
         method: "PATCH",
@@ -266,20 +249,16 @@ export default function OwnerDashboard() {
       });
       if (!res.ok) {
         const txt = await res.text();
-        throw new Error(txt || "Failed to update status");
+        throw new Error(txt || "Update failed");
       }
       const updated = await res.json();
       setOrders(prev => prev.map(o => (o._id === updated._id ? updated : o)));
-      setMsg("Order updated");
+      setOrderMsg("Order updated");
     } catch (err) {
       console.error("updateOrderStatus", err);
-      setMsg("Failed to update order: " + (err.message || err));
+      setOrderMsg("Error: " + (err.message || err));
       if (selectedShop && selectedShop._id) loadOrdersForShop(selectedShop._id);
     }
-  }
-
-  async function cancelOrder(orderId) {
-    await updateOrderStatus(orderId, "cancelled");
   }
 
   function displayOrderLabel(order) {
@@ -287,34 +266,48 @@ export default function OwnerDashboard() {
     return `Order #${String(order._id || "").slice(0, 6)}`;
   }
 
+  // UI helpers
+  function selectShopAndView(shop, view = "menu") {
+    setSelectedShop(shop);
+    setActiveView(view);
+    setMsg("");
+    setItemMsg("");
+    setShopMsg("");
+    setOrderMsg("");
+  }
+
+  // render
   return (
     <div className="min-h-screen p-6 bg-gray-50">
       <div className="max-w-6xl mx-auto bg-white p-4 rounded shadow grid grid-cols-12 gap-6">
-        {/* Sidebar (col 1-3) */}
+        {/* Sidebar */}
         <aside className="col-span-3 border rounded p-4 flex flex-col justify-between">
           <div>
-            <div className="flex items-center justify-between mb-4">
-              <div className="text-xl font-semibold">☰</div>
+            <div className="mb-4">
+              <button className="text-xl">☰</button>
             </div>
 
-            <div className="space-y-4">
+            <div className="space-y-3">
               <button
-                onClick={() => { setSidebarMode(sidebarMode === "edit" ? "view" : "edit"); setShopMsg(""); }}
-                className="w-full py-2 rounded bg-gray-800 text-white"
+                onClick={() => { setActiveView("your-shop"); setShopMsg(""); setItemMsg(""); setOrderMsg(""); }}
+                aria-pressed={activeView === "your-shop"}
+                className={`w-full py-2 rounded ${activeView === "your-shop" ? "bg-gray-900 text-white" : "bg-gray-200"}`}
               >
                 Your Shop
               </button>
 
               <button
-                onClick={() => { setActiveTab("menu"); setSidebarMode("view"); }}
-                className={`w-full py-2 rounded ${activeTab === "menu" ? "bg-blue-600 text-white" : "bg-gray-200"}`}
+                onClick={() => { setActiveView("menu"); setItemMsg(""); setShopMsg(""); }}
+                aria-pressed={activeView === "menu"}
+                className={`w-full py-2 rounded ${activeView === "menu" ? "bg-blue-600 text-white" : "bg-gray-200"}`}
               >
                 Menu
               </button>
 
               <button
-                onClick={() => { setActiveTab("orders"); setSidebarMode("view"); }}
-                className={`w-full py-2 rounded ${activeTab === "orders" ? "bg-blue-600 text-white" : "bg-gray-200"}`}
+                onClick={() => { setActiveView("order"); setOrderMsg(""); setShopMsg(""); }}
+                aria-pressed={activeView === "order"}
+                className={`w-full py-2 rounded ${activeView === "order" ? "bg-blue-600 text-white" : "bg-gray-200"}`}
               >
                 Order
               </button>
@@ -322,68 +315,121 @@ export default function OwnerDashboard() {
           </div>
 
           <div>
-            <button onClick={logout} className="w-full py-2 rounded bg-gray-800 text-white">logout</button>
+            <button onClick={logout} className="w-full py-2 rounded bg-gray-900 text-white">logout</button>
           </div>
         </aside>
 
-        {/* Main area (col 4-12) */}
+        {/* Main area */}
         <main className="col-span-9">
-          {/* top-centered shop info */}
+          {/* header: centered shop name & pincode */}
           <div className="text-center mb-4">
             <div className="text-lg font-semibold">{selectedShop ? selectedShop.name : "Shop Name"}</div>
-            <div className="text-sm text-gray-500">{selectedShop ? `${selectedShop.address || ""} • ${selectedShop.pincode || ""}` : "Address • Pincode"}</div>
+            <div className="text-sm text-gray-500">{selectedShop ? `${selectedShop.address || ""}${selectedShop.pincode ? " • " + selectedShop.pincode : ""}` : "Address • Pincode"}</div>
           </div>
 
-          {/* messages */}
-          {msg && <div className="mb-3 text-sm text-red-600">{msg}</div>}
-
-          {/* Tabs + Add menu button */}
-          <div className="flex items-center justify-between mb-4">
-            <div className="flex gap-3">
-              <button onClick={() => setActiveTab("menu")} className={`px-4 py-2 rounded ${activeTab === "menu" ? "bg-black text-white" : "bg-gray-200"}`}>menu</button>
-              <button onClick={() => setActiveTab("orders")} className={`px-4 py-2 rounded ${activeTab === "orders" ? "bg-black text-white" : "bg-gray-200"}`}>order</button>
+          {/* top inline messages */}
+          {(msg || shopMsg || itemMsg || orderMsg) && (
+            <div className="mb-3 space-y-1">
+              {msg && <div className="text-sm text-red-600">{msg}</div>}
+              {shopMsg && <div className="text-sm text-gray-700">{shopMsg}</div>}
+              {itemMsg && <div className="text-sm text-gray-700">{itemMsg}</div>}
+              {orderMsg && <div className="text-sm text-gray-700">{orderMsg}</div>}
             </div>
+          )}
 
-            <div>
-              {/* show add menu only when menu tab is active */}
-              {activeTab === "menu" && (
-                <button onClick={() => { setItemMsg(""); setNewItem({ name: "", price: "" }); }} className="px-4 py-2 bg-gray-800 text-white rounded">add menu</button>
-              )}
+          {/* Tab buttons — hidden when your-shop is active */}
+          {activeView !== "your-shop" && (
+            <div className="flex items-center justify-start gap-3 mb-4">
+              <button onClick={() => setActiveView("menu")} className={`px-3 py-1 rounded ${activeView === "menu" ? "bg-black text-white" : "bg-gray-200"}`}>menu</button>
+              <button onClick={() => setActiveView("order")} className={`px-3 py-1 rounded ${activeView === "order" ? "bg-black text-white" : "bg-gray-200"}`}>order</button>
             </div>
-          </div>
+          )}
 
-          {/* layout: main content area */}
+          {/* Content area box */}
           <div className="bg-gray-100 rounded p-4 min-h-[40vh]">
-            {/* MENU tab UI */}
-            {activeTab === "menu" && (
-              <>
-                <h3 className="mb-3 font-medium">Menu for {selectedShop ? selectedShop.name : "—"}</h3>
+            {/* YOUR SHOP view: show only the shop edit panel inside main area */}
+            {activeView === "your-shop" && (
+              <div className="max-w-md mx-auto bg-white p-4 rounded shadow-sm">
+                <h3 className="font-medium mb-2">Edit Shop</h3>
+                <form onSubmit={saveShop} className="space-y-3">
+                  <div>
+                    <label className="text-sm block mb-1">Name</label>
+                    <input value={shopForm.name} onChange={e => setShopForm(s => ({ ...s, name: e.target.value }))} className="w-full p-2 border rounded" />
+                  </div>
+                  <div>
+                    <label className="text-sm block mb-1">Phone</label>
+                    <input value={shopForm.phone} onChange={e => setShopForm(s => ({ ...s, phone: e.target.value }))} className="w-full p-2 border rounded" />
+                  </div>
+                  <div>
+                    <label className="text-sm block mb-1">Address</label>
+                    <input value={shopForm.address} onChange={e => setShopForm(s => ({ ...s, address: e.target.value }))} className="w-full p-2 border rounded" />
+                  </div>
+                  <div>
+                    <label className="text-sm block mb-1">Pincode</label>
+                    <input value={shopForm.pincode} onChange={e => setShopForm(s => ({ ...s, pincode: e.target.value }))} className="w-full p-2 border rounded" />
+                  </div>
 
-                {/* Inline Add/Edit item form (top-right in your mock) */}
-                <div className="mb-4 flex justify-end">
-                  <form onSubmit={newItem._editingId ? saveEditedItem : addItem} className="flex items-center gap-2">
-                    <input value={newItem.name} onChange={(e) => setNewItem(prev => ({ ...prev, name: e.target.value }))} placeholder="Item name" className="p-2 border rounded" />
-                    <input value={newItem.price} onChange={(e) => setNewItem(prev => ({ ...prev, price: e.target.value }))} placeholder="Price" type="number" className="p-2 border rounded w-28" />
-                    <button type="submit" className="px-3 py-2 bg-green-600 text-white rounded">{newItem._editingId ? "Save" : "Add"}</button>
-                    <button type="button" onClick={() => setNewItem({ name: "", price: "" })} className="px-3 py-2 bg-gray-300 rounded">Clear</button>
+                  <div className="flex gap-2">
+                    <button type="submit" className="px-3 py-2 bg-blue-600 text-white rounded">Save</button>
+                    <button type="button" onClick={() => {
+                      // revert form
+                      setShopForm({
+                        name: selectedShop?.name || "",
+                        phone: selectedShop?.phone || "",
+                        address: selectedShop?.address || "",
+                        pincode: selectedShop?.pincode || "",
+                      });
+                      setShopMsg("");
+                    }} className="px-3 py-2 bg-gray-200 rounded">Cancel</button>
+                  </div>
+                  {shopMsg && <div className="text-sm text-gray-700 mt-1">{shopMsg}</div>}
+                </form>
+              </div>
+            )}
+
+            {/* MENU view */}
+            {activeView === "menu" && (
+              <>
+                {/* inline add/edit form at top-right (we center container and right-align the form) */}
+                <div className="flex justify-end mb-4">
+                  <form onSubmit={submitItem} className="flex items-center gap-2">
+                    <input value={itemForm.name} onChange={e => setItemForm(prev => ({ ...prev, name: e.target.value }))} placeholder="Item name" className="p-2 border rounded" />
+                    <input value={itemForm.price} onChange={e => setItemForm(prev => ({ ...prev, price: e.target.value }))} placeholder="Price" type="number" className="p-2 border rounded w-28" />
+                    <button type="submit" className="px-3 py-2 bg-green-600 text-white rounded">{itemForm._editingId ? "Save" : "Add"}</button>
+                    <button type="button" onClick={() => setItemForm({ name: "", price: "", _editingId: null })} className="px-3 py-2 bg-gray-200 rounded">Clear</button>
                   </form>
                 </div>
 
-                {itemMsg && <div className="mb-3 text-sm text-gray-700">{itemMsg}</div>}
-
-                {/* Menu list */}
-                {selectedShop === null ? <div>Select a shop to view its menu</div> : menu.length === 0 ? <div>No items</div> : (
+                {/* menu list */}
+                <h4 className="mb-2 font-medium">Menu for {selectedShop ? selectedShop.name : "—"}</h4>
+                {selectedShop === null ? (
+                  <div>Select a shop to view its menu</div>
+                ) : menu.length === 0 ? (
+                  <div>No items</div>
+                ) : (
                   <div className="space-y-3">
                     {menu.map(it => (
-                      <div key={it._id} className="p-3 bg-white rounded border flex justify-between items-center">
+                      <div key={it._id} className="bg-white border rounded p-3 flex justify-between items-center">
                         <div>
                           <div className="font-medium">{it.name} • ₹{it.price}</div>
                           <div className="text-xs text-gray-500">{it.available ? "Available" : "Unavailable"}</div>
                         </div>
-                        <div className="flex gap-2">
-                          <button onClick={() => toggleAvailability(it)} className={`px-3 py-1 rounded text-sm ${it.available ? "bg-green-100 text-green-800" : "bg-gray-200 text-gray-700"}`}>{it.available ? "Enabled" : "Disabled"}</button>
-                          <button onClick={() => editItem(it)} className="px-3 py-1 bg-yellow-400 rounded">Edit</button>
-                          <button onClick={() => deleteItem(it)} className="px-3 py-1 bg-gray-300 rounded">Delete</button>
+
+                        <div className="flex items-center gap-2">
+                          <button onClick={() => toggleAvailability(it)} className={`px-3 py-1 rounded text-sm ${it.available ? "bg-green-100 text-green-800" : "bg-gray-200 text-gray-700"}`}>
+                            {it.available ? "Enabled" : "Disabled"}
+                          </button>
+
+                          <button onClick={() => startEditItem(it)} className="px-3 py-1 bg-yellow-400 rounded">Edit</button>
+
+                          {deletingItemId === it._id ? (
+                            <div className="flex items-center gap-2">
+                              <button onClick={() => confirmDeleteItem(it._id)} className="px-3 py-1 bg-red-600 text-white rounded">Yes</button>
+                              <button onClick={() => setDeletingItemId(null)} className="px-3 py-1 bg-gray-200 rounded">No</button>
+                            </div>
+                          ) : (
+                            <button onClick={() => setDeletingItemId(it._id)} className="px-3 py-1 bg-gray-300 rounded">Delete</button>
+                          )}
                         </div>
                       </div>
                     ))}
@@ -392,21 +438,26 @@ export default function OwnerDashboard() {
               </>
             )}
 
-            {/* ORDERS tab UI */}
-            {activeTab === "orders" && (
+            {/* ORDERS view */}
+            {activeView === "order" && (
               <>
-                <h3 className="mb-3 font-medium">Orders for {selectedShop ? selectedShop.name : "—"}</h3>
-                {orders.length === 0 ? <div>No orders</div> : (
+                <h4 className="mb-2 font-medium">Orders for {selectedShop ? selectedShop.name : "—"}</h4>
+                {selectedShop === null ? (
+                  <div>Select a shop to view orders</div>
+                ) : orders.length === 0 ? (
+                  <div>No orders</div>
+                ) : (
                   <div className="space-y-3">
                     {orders.map(o => {
                       const status = (o.status || "").toLowerCase();
                       return (
-                        <div key={o._id} className="p-3 bg-white rounded border flex justify-between">
+                        <div key={o._id} className="bg-white border rounded p-3 flex justify-between">
                           <div>
                             <div className="font-medium">{displayOrderLabel(o)} — <span className="text-sm text-gray-600">{status}</span></div>
                             <div className="text-sm text-gray-600">{o.items.map(i => `${i.name} x${i.qty}`).join(", ")}</div>
                             <div className="text-sm text-gray-600">₹{o.total}</div>
                           </div>
+
                           <div className="flex flex-col items-end gap-2">
                             <div className="text-sm">Customer: <b>{o.customerName}</b></div>
                             <div className="flex gap-2">
@@ -414,7 +465,7 @@ export default function OwnerDashboard() {
                               <button onClick={() => updateOrderStatus(o._id, "packed")} disabled={status !== "accepted"} className={`px-3 py-1 rounded ${status === "accepted" ? "bg-yellow-500 text-white" : "bg-gray-200 text-gray-600"}`}>Packed</button>
                               <button onClick={() => updateOrderStatus(o._id, "out-for-delivery")} disabled={status !== "packed"} className={`px-3 py-1 rounded ${status === "packed" ? "bg-indigo-600 text-white" : "bg-gray-200 text-gray-600"}`}>Out for delivery</button>
                               <button onClick={() => updateOrderStatus(o._id, "delivered")} disabled={status !== "out-for-delivery"} className={`px-3 py-1 rounded ${status === "out-for-delivery" ? "bg-green-600 text-white" : "bg-gray-200 text-gray-600"}`}>Delivered</button>
-                              <button onClick={() => cancelOrder(o._id)} disabled={status === "delivered" || status === "cancelled"} className={`px-3 py-1 rounded ${status === "cancelled" ? "bg-gray-400 text-white" : "bg-red-500 text-white"}`}>Cancel</button>
+                              <button onClick={() => updateOrderStatus(o._id, "cancelled")} disabled={status === "delivered" || status === "cancelled"} className={`px-3 py-1 rounded ${status === "cancelled" ? "bg-gray-400 text-white" : "bg-red-500 text-white"}`}>Cancel</button>
                             </div>
                           </div>
                         </div>
@@ -426,40 +477,6 @@ export default function OwnerDashboard() {
             )}
           </div>
         </main>
-
-        {/* Inline sidebar edit panel (rendered within the same grid, below sidebar when in edit mode) */}
-        <div className="col-span-3 mt-4">
-          {sidebarMode === "edit" && selectedShop && (
-            <div className="p-4 border rounded bg-white">
-              <h4 className="font-medium mb-2">Edit Shop</h4>
-              <form onSubmit={saveShopDetails} className="space-y-2">
-                <div>
-                  <label className="text-sm block mb-1">Name</label>
-                  <input className="w-full p-2 border rounded" value={shopForm.name} onChange={e => setShopForm(s => ({ ...s, name: e.target.value }))} />
-                </div>
-                <div>
-                  <label className="text-sm block mb-1">Phone</label>
-                  <input className="w-full p-2 border rounded" value={shopForm.phone} onChange={e => setShopForm(s => ({ ...s, phone: e.target.value }))} />
-                </div>
-                <div>
-                  <label className="text-sm block mb-1">Address</label>
-                  <input className="w-full p-2 border rounded" value={shopForm.address} onChange={e => setShopForm(s => ({ ...s, address: e.target.value }))} />
-                </div>
-                <div>
-                  <label className="text-sm block mb-1">Pincode</label>
-                  <input className="w-full p-2 border rounded" value={shopForm.pincode} onChange={e => setShopForm(s => ({ ...s, pincode: e.target.value }))} />
-                </div>
-
-                <div className="flex gap-2">
-                  <button type="submit" className="px-3 py-2 bg-blue-600 text-white rounded">Save</button>
-                  <button type="button" onClick={closeShopEdit} className="px-3 py-2 bg-gray-200 rounded">Cancel</button>
-                </div>
-
-                {shopMsg && <div className="text-sm mt-1 text-gray-700">{shopMsg}</div>}
-              </form>
-            </div>
-          )}
-        </div>
       </div>
     </div>
   );
