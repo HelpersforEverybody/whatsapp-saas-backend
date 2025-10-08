@@ -263,16 +263,31 @@ export default function ShopManager() {
               placeholder="Your Name"
               className="p-2 border rounded w-full"
             />
-            <div>
-              <input
-                value={customerPhone}
-                onChange={(e) => { setCustomerPhone(e.target.value); setInlinePhoneError(""); }}
-                onBlur={handlePhoneBlur}
-                placeholder="Your Phone (10 digits will auto-prefix +91 on blur)"
-                className="p-2 border rounded w-full"
-              />
-              {inlinePhoneError ? <div className="text-sm text-red-600 mt-1">{inlinePhoneError}</div> : null}
-            </div>
+          <div>
+  <label className="block text-sm text-gray-600 mb-1">Phone Number</label>
+  <div className="flex items-center border rounded overflow-hidden">
+    <span className="px-3 py-2 bg-gray-100 text-gray-700 select-none">+91</span>
+    <input
+      type="text"
+      inputMode="numeric"
+      pattern="[0-9]*"
+      maxLength="10"
+      value={customerPhone}
+      onChange={(e) => {
+        // remove any non-digits and limit to 10
+        const digits = e.target.value.replace(/\D/g, "").slice(0, 10);
+        setCustomerPhone(digits);
+        setInlinePhoneError("");
+      }}
+      placeholder="Enter 10-digit number"
+      className="p-2 flex-1 outline-none"
+    />
+  </div>
+  {inlinePhoneError ? (
+    <div className="text-sm text-red-600 mt-1">{inlinePhoneError}</div>
+  ) : null}
+</div>
+
             <div>
               <input
                 value={pincode}
