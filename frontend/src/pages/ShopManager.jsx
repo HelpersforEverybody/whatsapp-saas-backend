@@ -3,6 +3,9 @@ import React, { useEffect, useState } from "react";
 import { getApiBase } from "../hooks/useApi";
 import Cart from "../components/Cart";
 import { useNavigate } from "react-router-dom";
+import Cart from "../components/Cart";
+import ProfileMenu from "../components/ProfileMenu"; // if you use it; optional
+
 
 const API_BASE = getApiBase();
 const API_KEY = import.meta.env.VITE_API_KEY || "";
