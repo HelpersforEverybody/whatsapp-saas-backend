@@ -1,91 +1,29 @@
 // frontend/src/components/ProfileMenu.jsx
-import React, { useState, useRef, useEffect } from "react";
+import React from "react";
 
 /**
- * ProfileMenu Component
- * ---------------------
- * Shows “Logged in as …” with a small dropdown for Profile & Logout.
- *
+ * Simple ProfileMenu placeholder.
  * Props:
- * - name: string (customer name)
- * - phone: string (customer phone number)
- * - onLogout: function() -> void
- * - onOpenProfile: function() -> void
+ *  - name, phone
+ *  - onEdit (optional)
+ *  - onLogout (optional)
  */
-
-export default function ProfileMenu({
-  name = "",
-  phone = "",
-  onLogout = () => {},
-  onOpenProfile = () => {},
-}) {
-  const [open, setOpen] = useState(false);
-  const menuRef = useRef(null);
-
-  // Close dropdown if clicked outside
-  useEffect(() => {
-    function handleClickOutside(event) {
-      if (menuRef.current && !menuRef.current.contains(event.target)) {
-        setOpen(false);
-      }
-    }
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, []);
-
-  const displayName =
-    name && name.trim().length > 0
-      ? name.trim()
-      : phone
-      ? `+91${String(phone).replace(/\D/g, "").slice(-10)}`
-      : "Guest";
-
+export default function ProfileMenu({ name = "", phone = "", onEdit = () => {}, onLogout = () => {} }) {
+  const displayPhone = phone ? (phone.startsWith("+") ? phone : `+91${phone}`) : "—";
   return (
-    <div className="relative inline-block text-left" ref={menuRef}>
-      {/* Profile button */}
-      <button
-        onClick={() => setOpen((o) => !o)}
-        className="flex items-center gap-2 px-3 py-2 border rounded bg-white hover:bg-gray-50 shadow-sm"
-      >
-        <span className="text-gray-700 text-sm">
-          Logged in as <b>{displayName}</b>
-        </span>
-        <svg
-          xmlns="http://www.w3.org/2000/svg"
-          className={`w-4 h-4 transition-transform ${
-            open ? "rotate-180" : "rotate-0"
-          }`}
-          fill="none"
-          viewBox="0 0 24 24"
-          stroke="currentColor"
-        >
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-        </svg>
-      </button>
-
-      {/* Dropdown menu */}
-      {open && (
-        <div className="absolute right-0 mt-2 w-40 bg-white border rounded shadow-lg z-10">
-          <button
-            onClick={() => {
-              setOpen(false);
-              onOpenProfile();
-            }}
-            className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
-          >
-            Profile
-          </button>
-          <button
-            onClick={() => {
-              setOpen(false);
-              onLogout();
-            }}
-            className="w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-gray-100"
-          >
-            Logout
-          </button>
+    <div className="p-3 border rounded bg-white shadow-sm w-64">
+      <div className="flex items-center gap-3 mb-3">
+        <div className="w-10 h-10 rounded-full bg-gray-200 flex items-center justify-center text-xl">👤</div>
+        <div>
+          <div className="font-medium">{name || displayPhone}</div>
+          <div className="text-xs text-gray-500">{displayPhone}</div>
         </div>
-      )}
+      </div>
+
+      <div className="space-y-2">
+        <button onClick={onEdit} className="w-full px-3 py-1 border rounded text-sm text-left">Edit Profile</button>
+        <button onClick={onLogout} className="w-full px-3 py-1 bg-red-500 text-white rounded text-sm">Logout</button>
+      </div>
     </div>
   );
 }
