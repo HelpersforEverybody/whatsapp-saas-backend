@@ -1,9 +1,10 @@
 // frontend/src/pages/ShopManager.jsx
 import React, { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { getApiBase } from "../hooks/useApi";
 import Cart from "../components/Cart";
-import ProfileMenu from "../components/ProfileMenu"; // keep as you had it
-import { createPortal } from "react-dom";
+import ProfileMenu from "../components/ProfileMenu";
+
 const API_BASE = getApiBase();
 const API_KEY = import.meta.env.VITE_API_KEY || "";
 
@@ -14,7 +15,7 @@ export default function ShopManager() {
   const [menu, setMenu] = useState([]);
   const [loading, setLoading] = useState(false);
 
-  // filter pincode (applied only when user clicks Apply)
+  // filter pincode
   const [pincode, setPincode] = useState("");
   const [pincodeErr, setPincodeErr] = useState("");
 
@@ -29,16 +30,16 @@ export default function ShopManager() {
 
   // Auth modal / OTP
   const [authModalOpen, setAuthModalOpen] = useState(false);
-  const [authMode, setAuthMode] = useState("login"); // 'login' (phone only) or 'signup' (name + phone)
+  const [authMode, setAuthMode] = useState("login"); // 'login' or 'signup'
   const [otpSent, setOtpSent] = useState(false);
-  const [otpPhone, setOtpPhone] = useState(""); // normalized +91...
+  const [otpPhone, setOtpPhone] = useState("");
   const [otpDigitsInput, setOtpDigitsInput] = useState("");
   const [otpCode, setOtpCode] = useState("");
   const [authMsg, setAuthMsg] = useState("");
 
-  // address modal
+  // address modal (portal)
   const [addressModalOpen, setAddressModalOpen] = useState(false);
-  // authoritative addresses when logged in come from server
+  const [addressEditIndex, setAddressEditIndex] = useState(null);
   const [addresses, setAddresses] = useState(() => {
     try {
       return JSON.parse(localStorage.getItem("customer_addresses") || "[]");
@@ -46,20 +47,18 @@ export default function ShopManager() {
       return [];
     }
   });
-  const [addressForm, setAddressForm] = useState({ name: "", phone: "", address: "", pincode: "", label: "Home" });
+  const [addressForm, setAddressForm] = useState({ label: "Home", name: "", phone: "", address: "", pincode: "" });
   const [addressMsg, setAddressMsg] = useState("");
-  const [addressEditIndex, setAddressEditIndex] = useState(null);
 
   // cart modal (confirm & choose address)
   const [cartModalOpen, setCartModalOpen] = useState(false);
 
-  // load shops at mount (no pincode applied until user uses Apply)
+  // load shops at mount
   useEffect(() => {
     loadShops();
     setCustomerToken(localStorage.getItem("customer_token") || "");
     setCustomerName(localStorage.getItem("customer_name") || "");
     setCustomerPhone(localStorage.getItem("customer_phone") || "");
-    // if already logged in, fetch authoritative addresses
     if (localStorage.getItem("customer_token")) {
       fetchCustomerAddresses().catch(() => {});
     }
@@ -83,9 +82,7 @@ export default function ShopManager() {
     setLoading(true);
     try {
       let url = `${API_BASE}/api/shops`;
-      if (pincode && pincode.trim()) {
-        url += `?pincode=${encodeURIComponent(String(pincode).trim())}`;
-      }
+      if (pincode && pincode.trim()) url += `?pincode=${encodeURIComponent(String(pincode).trim())}`;
       const res = await fetch(url);
       if (!res.ok) throw new Error("Failed to load shops");
       const data = await res.json();
@@ -119,9 +116,7 @@ export default function ShopManager() {
   // -------------------------
   // Cart helpers
   // -------------------------
-  function getQty(itemId) {
-    return Number(cart[itemId] || 0);
-  }
+  function getQty(itemId) { return Number(cart[itemId] || 0); }
   function setQty(itemId, qty) {
     setCart(prev => {
       const copy = { ...prev };
@@ -171,14 +166,8 @@ export default function ShopManager() {
     setAuthMsg("");
     try {
       const digits = String(digits10 || "").replace(/\D/g, "").slice(-10);
-      if (digits.length !== 10) {
-        setAuthMsg("Enter 10 digits to send OTP");
-        return;
-      }
-      if (authMode === "signup" && (!nameToKeepIfSignup || !String(nameToKeepIfSignup).trim())) {
-        setAuthMsg("Please enter your name to signup");
-        return;
-      }
+      if (digits.length !== 10) { setAuthMsg("Enter 10 digits to send OTP"); return; }
+      if (authMode === "signup" && (!nameToKeepIfSignup || !String(nameToKeepIfSignup).trim())) { setAuthMsg("Please enter your name to signup"); return; }
       const normalized = `+91${digits}`;
       const res = await fetch(`${API_BASE}/auth/send-otp`, {
         method: "POST",
@@ -186,17 +175,13 @@ export default function ShopManager() {
         body: JSON.stringify({ phone: normalized }),
       });
       if (!res.ok) {
-        const txt = await res.text();
-        throw new Error(txt || "Failed to send OTP");
+        const txt = await res.text(); throw new Error(txt || "Failed to send OTP");
       }
       setOtpSent(true);
       setOtpPhone(normalized);
       setOtpDigitsInput(digits);
       setAuthMsg("OTP sent — check server logs (demo).");
-      // if signup, keep name in customerName state so verify can store it
-      if (authMode === "signup" && nameToKeepIfSignup) {
-        setCustomerName(nameToKeepIfSignup);
-      }
+      if (authMode === "signup" && nameToKeepIfSignup) setCustomerName(nameToKeepIfSignup);
     } catch (e) {
       console.error("sendOtp error", e);
       setAuthMsg("Error sending OTP: " + (e.message || e));
@@ -208,15 +193,19 @@ export default function ShopManager() {
     setAuthMsg("");
     try {
       if (!otpPhone || !otpCode) { setAuthMsg("Phone and OTP required"); return; }
-      // POST /auth/verify-otp returns token and customer info
+      const payload = { phone: otpPhone, otp: otpCode };
+      // if signup mode, prefer server-side signup flow (server may require separate endpoint)
+      if (authMode === "signup") {
+        payload.name = customerName || "";
+        payload.signup = true;
+      }
       const res = await fetch(`${API_BASE}/auth/verify-otp`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ phone: otpPhone, otp: otpCode }),
+        body: JSON.stringify(payload),
       });
       if (!res.ok) {
-        const txt = await res.text();
-        throw new Error(txt || "OTP verify failed");
+        const txt = await res.text(); throw new Error(txt || "OTP verify failed");
       }
       const data = await res.json(); // { token, userId, phone, name }
       if (!data.token) throw new Error("No token returned");
@@ -227,7 +216,7 @@ export default function ShopManager() {
       setCustomerToken(data.token);
       setCustomerPhone((data.phone || "").replace(/\D/g, "").slice(-10) || "");
       setCustomerName((data.name || customerName || "").trim() || "");
-      // fetch authoritative addresses from server
+      // fetch authoritative addresses
       await fetchCustomerAddresses();
       // close auth UI
       setAuthModalOpen(false);
@@ -247,7 +236,6 @@ export default function ShopManager() {
     setCustomerToken("");
     setCustomerName("");
     setCustomerPhone("");
-    // keep addresses in localStorage as guest fallback
   }
 
   // -------------------------
@@ -256,24 +244,16 @@ export default function ShopManager() {
   async function fetchCustomerAddresses() {
     try {
       const token = localStorage.getItem("customer_token");
-      if (!token) {
-        // no logged in user; keep local fallback
-        return;
-      }
+      if (!token) return;
       const res = await fetch(`${API_BASE}/api/customers/addresses`, {
         headers: { Authorization: `Bearer ${token}` }
       });
-      if (!res.ok) {
-        // don't blow up UI if addresses can't be fetched
-        throw new Error("Failed to load addresses");
-      }
+      if (!res.ok) throw new Error("Failed to load addresses");
       const data = await res.json();
-      // ensure first address visible as default client-side
       setAddresses(Array.isArray(data) ? data : []);
       localStorage.setItem("customer_addresses", JSON.stringify(Array.isArray(data) ? data : []));
     } catch (e) {
       console.error("fetchCustomerAddresses error", e);
-      // do nothing, keep existing addresses
     }
   }
 
@@ -292,30 +272,31 @@ export default function ShopManager() {
   }
 
   function openAddAddressModal(editIndex = null) {
-  if (typeof editIndex === "number") {
-    const existing = addresses[editIndex] || {};
-    // strip +91 when populating phone input
-    const rawPhone = String(existing.phone || "");
-    const digits = rawPhone.replace(/\D/g, "").slice(-10);
-    setAddressForm({
-      name: existing.name || "",
-      phone: digits,
-      address: existing.address || "",
-      pincode: existing.pincode || (selectedShop ? selectedShop.pincode : ""),
-      // keep any other fields if needed
-    });
-  } else {
-    setAddressForm({
-      name: customerName || "",
-      phone: (customerPhone || "").replace(/\D/g, "").slice(-10),
-      address: "",
-      pincode: selectedShop?.pincode || ""
-    });
+    if (typeof editIndex === "number") {
+      const existing = addresses[editIndex] || {};
+      const rawPhone = String(existing.phone || "");
+      const digits = rawPhone.replace(/\D/g, "").slice(-10);
+      setAddressForm({
+        label: existing.label || "Home",
+        name: existing.name || "",
+        phone: digits || "",
+        address: existing.address || "",
+        pincode: existing.pincode || (selectedShop ? selectedShop.pincode : ""),
+      });
+      setAddressEditIndex(editIndex);
+    } else {
+      setAddressForm({
+        label: "Home",
+        name: customerName || "",
+        phone: (customerPhone || "").replace(/\D/g, "").slice(-10),
+        address: "",
+        pincode: selectedShop?.pincode || ""
+      });
+      setAddressEditIndex(null);
+    }
+    setAddressMsg("");
+    setAddressModalOpen(true);
   }
-  setAddressMsg("");
-  setAddressModalOpen(true);
-}
-
 
   // add or update (server if logged-in)
   async function addOrUpdateAddress(editIndex = null) {
@@ -324,26 +305,29 @@ export default function ShopManager() {
     const token = localStorage.getItem("customer_token");
     if (token) {
       try {
+        const body = {
+          label: addressForm.label,
+          name: addressForm.name,
+          phone: (addressForm.phone || "").replace(/\D/g, "").length === 10 ? `+91${(addressForm.phone || "").replace(/\D/g, "").slice(-10)}` : (addressForm.phone || ""),
+          address: addressForm.address,
+          pincode: addressForm.pincode
+        };
         if (typeof editIndex === "number" && addresses[editIndex] && addresses[editIndex]._id) {
           const id = addresses[editIndex]._id;
           const res = await fetch(`${API_BASE}/api/customers/addresses/${id}`, {
             method: "PATCH",
             headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-            body: JSON.stringify(addressForm)
+            body: JSON.stringify(body)
           });
-          if (!res.ok) {
-            const txt = await res.text(); throw new Error(txt || "Failed to update address");
-          }
+          if (!res.ok) { const txt = await res.text(); throw new Error(txt || "Failed to update address"); }
           await fetchCustomerAddresses();
         } else {
           const res = await fetch(`${API_BASE}/api/customers/addresses`, {
             method: "POST",
             headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-            body: JSON.stringify(addressForm)
+            body: JSON.stringify(body)
           });
-          if (!res.ok) {
-            const txt = await res.text(); throw new Error(txt || "Failed to add address");
-          }
+          if (!res.ok) { const txt = await res.text(); throw new Error(txt || "Failed to add address"); }
           await fetchCustomerAddresses();
         }
         setAddressModalOpen(false);
@@ -354,10 +338,18 @@ export default function ShopManager() {
       }
       return;
     }
-    // guest fallback (local)
+    // guest fallback
     const copy = [...addresses];
-    if (typeof editIndex === "number") copy[editIndex] = { ...addressForm };
-    else copy.push({ ...addressForm });
+    const localAddr = {
+      _id: String(Date.now()) + Math.random().toString(36).slice(2, 7),
+      label: addressForm.label,
+      name: addressForm.name,
+      phone: (addressForm.phone || "").replace(/\D/g, "").slice(-10),
+      address: addressForm.address,
+      pincode: addressForm.pincode,
+    };
+    if (typeof editIndex === "number") copy[editIndex] = localAddr;
+    else copy.push(localAddr);
     saveAddressesToStore(copy);
     setAddressModalOpen(false);
   }
@@ -366,10 +358,7 @@ export default function ShopManager() {
     const token = localStorage.getItem("customer_token");
     if (token && addresses[idx] && addresses[idx]._id) {
       try {
-        // prevent deleting default first address client-side; require user to set another default first
-        // (Simple rule: if idx===0 and there are >1 addresses, require user to Set Default first)
-        if (idx === 0 && (addresses.length > 1)) {
-          // optional: allow delete but for now ask user to set another default
+        if (idx === 0 && addresses.length > 1) {
           const proceed = window.confirm("This is your first address (default). Make another address default before deleting. Set another default now?");
           if (!proceed) return;
         }
@@ -378,9 +367,7 @@ export default function ShopManager() {
           method: "DELETE",
           headers: { Authorization: `Bearer ${token}` }
         });
-        if (!res.ok) {
-          const txt = await res.text(); throw new Error(txt || "Delete failed");
-        }
+        if (!res.ok) { const txt = await res.text(); throw new Error(txt || "Delete failed"); }
         await fetchCustomerAddresses();
         return;
       } catch (e) {
@@ -389,25 +376,20 @@ export default function ShopManager() {
         return;
       }
     }
-    // guest fallback
     const copy = [...addresses];
     copy.splice(idx, 1);
     saveAddressesToStore(copy);
   }
 
   // -------------------------
-  // Place order final (called by Cart when user confirms address)
+  // Place order final
   // -------------------------
   async function placeOrderFinal(selectedAddress) {
-    if (!customerToken) {
-      setAuthModalOpen(true);
-      return { ok: false, message: "Login required" };
-    }
+    if (!customerToken) { setAuthModalOpen(true); return { ok: false, message: "Login required" }; }
     if (!selectedShop) return { ok: false, message: "Select a shop" };
     const { items, totalPrice } = cartSummary();
     if (!items.length) return { ok: false, message: "Cart empty" };
 
-    // check pincode matches shop
     if (selectedAddress.pincode && selectedShop.pincode && String(selectedAddress.pincode) !== String(selectedShop.pincode)) {
       return { ok: false, message: `Shop does not serve pincode ${selectedAddress.pincode}. Shop pincode: ${selectedShop.pincode}` };
     }
@@ -435,10 +417,7 @@ export default function ShopManager() {
         },
         body: JSON.stringify(payload),
       });
-      if (!res.ok) {
-        const txt = await res.text();
-        throw new Error(txt || "Order failed");
-      }
+      if (!res.ok) { const txt = await res.text(); throw new Error(txt || "Order failed"); }
       const order = await res.json();
       setCart({});
       return { ok: true, order };
@@ -461,12 +440,8 @@ export default function ShopManager() {
             phone={`+91${(customerPhone || "").slice(-10)}`}
             onLogout={logoutCustomer}
             addresses={addresses}
-            onOpenAddressModal={() => openAddAddressModal()}
-            onManageAddresses={() => {
-              // open addresses modal list (reuse cart modal style or address modal)
-              // we'll open cartModalOpen acting as addresses viewer for now
-              setCartModalOpen(true);
-            }}
+            onOpenAddressModal={() => openAddAddressModal(null)}
+            onManageAddresses={() => { /* open a full addresses manager if you want */ setCartModalOpen(true); }}
           />
         </div>
       );
@@ -491,7 +466,7 @@ export default function ShopManager() {
           <TopRightBadge />
         </div>
 
-        {/* top area: only pincode filter (not name/phone inputs) */}
+        {/* top area */}
         <div className="mb-4 p-4 border rounded bg-gray-50">
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3 items-end">
             <div>
@@ -593,18 +568,16 @@ export default function ShopManager() {
                 </div>
                 <div className="flex items-center gap-2">
                   <button
-  onClick={async () => {
-    // if logged in, refresh addresses right before opening the cart modal
-    if (localStorage.getItem('customer_token')) {
-      await fetchCustomerAddresses().catch(err => console.error('addr fetch before cart open failed', err));
-    }
-    setCartModalOpen(true);
-  }}
-  className="px-4 py-2 bg-green-600 text-white rounded"
->
-  Open Cart
-</button>
-
+                    onClick={async () => {
+                      if (localStorage.getItem('customer_token')) {
+                        await fetchCustomerAddresses().catch(err => console.error('addr fetch before cart open failed', err));
+                      }
+                      setCartModalOpen(true);
+                    }}
+                    className="px-4 py-2 bg-green-600 text-white rounded"
+                  >
+                    Open Cart
+                  </button>
                 </div>
               </div>
             </div>
@@ -666,110 +639,77 @@ export default function ShopManager() {
         </div>
       )}
 
-{/* Address modal (portal so it appears above Cart) */}
-{addressModalOpen &&
-  createPortal(
-    <div className="fixed inset-0 z-[220] bg-black/40 flex items-center justify-center p-4">
-      <div className="bg-white rounded-lg shadow-lg w-full max-w-[520px] p-5">
-        <div className="flex justify-between items-center mb-3">
-          <h3 className="text-lg font-semibold">
-            {typeof addressEditIndex === "number" ? "Edit Address" : "Add Address"}
-          </h3>
-          <button
-            onClick={() => { setAddressModalOpen(false); setAddressMsg(""); }}
-            className="text-gray-600"
-          >
-            ✕
-          </button>
-        </div>
-
-        <div className="flex gap-2 mb-3">
-          {["Home","Office","Other"].map((t) => (
-            <button
-              key={t}
-              onClick={() => setAddressForm(f => ({ ...f, label: t }))}
-              className={`flex items-center gap-1 px-3 py-1 border rounded-full text-sm ${ (addressForm.label === t) ? "bg-blue-100 border-blue-400" : "border-gray-200"}`}
-            >
-              {t}
-            </button>
-          ))}
-        </div>
-
-        <div className="space-y-3">
-          <input
-            placeholder="Receiver’s name *"
-            value={addressForm.name}
-            onChange={(e) => setAddressForm(f => ({ ...f, name: e.target.value }))}
-            className="border rounded w-full p-2"
-          />
-
-          <div className="flex items-center border rounded overflow-hidden">
-            <span className="px-3 py-2 bg-gray-100 select-none">+91</span>
-            <input
-              placeholder="Phone (10 digits)*"
-              value={addressForm.phone}
-              onChange={(e) => setAddressForm(f => ({ ...f, phone: e.target.value.replace(/\D/g, "").slice(0,10) }))}
-              className="p-2 flex-1 outline-none"
-              maxLength={10}
-            />
-          </div>
-
-          <textarea
-            placeholder="Complete address *"
-            value={addressForm.address}
-            onChange={(e) => setAddressForm(f => ({ ...f, address: e.target.value }))}
-            className="border rounded w-full p-2 h-24"
-          />
-
-          <input
-            placeholder="Pincode *"
-            value={addressForm.pincode}
-            onChange={(e) => setAddressForm(f => ({ ...f, pincode: e.target.value.replace(/\D/g, "").slice(0,6) }))}
-            className="border rounded w-full p-2"
-            maxLength={6}
-          />
-        </div>
-
-        <div className="mt-4 flex justify-end gap-2">
-          <button onClick={() => { setAddressModalOpen(false); setAddressMsg(""); }} className="px-3 py-1 bg-gray-200 rounded">Cancel</button>
-          <button onClick={() => addOrUpdateAddress(addressEditIndex)} className="px-4 py-1 bg-blue-600 text-white rounded">Save</button>
-        </div>
-
-        {addressMsg && <div className="mt-3 text-sm text-red-600">{addressMsg}</div>}
-      </div>
-    </div>,
-    document.body
-  )
-}
-
       {/* Cart modal (confirm & place order) */}
       {cartModalOpen && (
-  <Cart
-    items={cartSummary().items}
-    totalQty={cartSummary().totalQty}
-    totalPrice={cartSummary().totalPrice}
-    addresses={addresses}
-    onAddAddress={() => openAddAddressModal(null)}
-    onEditAddress={(idx) => openAddAddressModal(idx)}
-    onDeleteAddress={(idx) => {
-      // confirm delete
-      if (!window.confirm("Delete this address?")) return;
-      deleteAddress(idx);
-    }}
-    onClose={() => setCartModalOpen(false)}
-    onConfirm={async (addressIdx) => {
-      const chosen = addresses[addressIdx];
-      const result = await placeOrderFinal(chosen);
-      if (result.ok) {
-        alert("Order placed successfully");
-        setCartModalOpen(false);
-      } else {
-        alert("Order failed: " + (result.message || "unknown"));
-      }
-    }}
-  />
-)}
+        <Cart
+          items={cartSummary().items}
+          totalQty={cartSummary().totalQty}
+          totalPrice={cartSummary().totalPrice}
+          addresses={addresses}
+          onAddAddress={() => openAddAddressModal(null)}
+          onEditAddress={(idx) => openAddAddressModal(idx)}
+          onDeleteAddress={(idx) => { if (!window.confirm("Delete this address?")) return; deleteAddress(idx); }}
+          onClose={() => setCartModalOpen(false)}
+          onConfirm={async (addressIdx) => {
+            const chosen = addresses[addressIdx];
+            if (!chosen) { alert("Select or add address first"); return; }
+            const result = await placeOrderFinal(chosen);
+            if (result.ok) {
+              alert("Order placed successfully");
+              setCartModalOpen(false);
+            } else {
+              alert("Order failed: " + (result.message || "unknown"));
+            }
+          }}
+        />
+      )}
 
+      {/* Address Add/Edit portal modal (renders above everything) */}
+      {addressModalOpen && createPortal(
+        <div className="fixed inset-0 z-[9999] bg-black/40 flex items-center justify-center p-4">
+          <div className="bg-white rounded-lg shadow-lg w-full max-w-[520px] p-5">
+            <div className="flex justify-between items-center mb-3">
+              <h3 className="text-lg font-semibold">{typeof addressEditIndex === "number" ? "Edit Address" : "Add Address"}</h3>
+              <button onClick={() => { setAddressModalOpen(false); setAddressMsg(""); }} className="text-gray-600">✕</button>
+            </div>
+
+            <div className="flex gap-2 mb-3">
+              {["Home","Office","Other"].map(t => (
+                <button key={t} onClick={() => setAddressForm(f => ({ ...f, label: t }))} className={`flex items-center gap-1 px-3 py-1 border rounded-full text-sm ${addressForm.label === t ? "bg-blue-100 border-blue-400" : "border-gray-200"}`}>
+                  {t}
+                </button>
+              ))}
+            </div>
+
+            <div className="space-y-3">
+              <input placeholder="Receiver’s name *" value={addressForm.name} onChange={(e) => setAddressForm(f => ({ ...f, name: e.target.value }))} className="border rounded w-full p-2" />
+
+              <div className="flex items-center border rounded overflow-hidden">
+                <span className="px-3 py-2 bg-gray-100 select-none">+91</span>
+                <input
+                  placeholder="Phone (10 digits)*"
+                  value={addressForm.phone}
+                  onChange={(e) => setAddressForm(f => ({ ...f, phone: e.target.value.replace(/\D/g, "").slice(0,10) }))}
+                  className="p-2 flex-1 outline-none"
+                  maxLength={10}
+                />
+              </div>
+
+              <textarea placeholder="Complete address *" value={addressForm.address} onChange={(e) => setAddressForm(f => ({ ...f, address: e.target.value }))} className="border rounded w-full p-2 h-24" />
+
+              <input placeholder="Pincode *" value={addressForm.pincode} onChange={(e) => setAddressForm(f => ({ ...f, pincode: e.target.value.replace(/\D/g, "").slice(0,6) }))} className="border rounded w-full p-2" maxLength={6} />
+            </div>
+
+            <div className="mt-4 flex justify-end gap-2">
+              <button onClick={() => { setAddressModalOpen(false); setAddressMsg(""); }} className="px-3 py-1 bg-gray-200 rounded">Cancel</button>
+              <button onClick={() => addOrUpdateAddress(addressEditIndex)} className="px-4 py-1 bg-blue-600 text-white rounded">Save</button>
+            </div>
+
+            {addressMsg && <div className="mt-3 text-sm text-red-600">{addressMsg}</div>}
+          </div>
+        </div>,
+        document.body
+      )}
     </div>
   );
 }
