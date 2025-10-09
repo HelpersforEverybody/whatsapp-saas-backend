@@ -199,42 +199,40 @@ export default function ShopManager() {
     }
   }
 
-  async function verifyOtpAndLogin() {
-    setAuthMsg("");
-    try {
-      if (!otpPhone || !otpCode) return setAuthMsg("Phone and OTP required");
-      const res = await fetch(`${API_BASE}/auth/verify-otp`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ phone: otpPhone, otp: otpCode }),
-      });
-      if (!res.ok) {
-        const txt = await res.text();
-        throw new Error(txt || "OTP verify failed");
-      }
-      const data = await res.json(); // { token, userId }
-      if (!data.token) throw new Error("No token returned");
+  const verifyOtpAndLogin = async () => {
+  try {
+    const payload = { phone: otpPhone, otp: otpCode };
 
-      // Save token and canonical customer info
+    // If the user came from Signup tab, include name + signup flag
+    if (activeTab === "signup") {
+      payload.name = customerName; // whatever state you use for the name input
+      payload.signup = true;
+    }
+
+    const res = await fetch(`${API_BASE}/auth/verify-otp`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+
+    const data = await res.json();
+
+    if (res.ok && data.token) {
       localStorage.setItem("customer_token", data.token);
-      setCustomerToken(data.token);
+      localStorage.setItem("customer_phone", data.phone);
+      localStorage.setItem("customer_name", data.name || "");
+      setCustomer({ token: data.token, phone: data.phone, name: data.name });
+      setShowOtpModal(false);
+      setOtpError("");
+    } else {
+      setOtpError(JSON.stringify(data));
+    }
+  } catch (err) {
+    console.error("verifyOtp error", err);
+    setOtpError(err.toString());
+  }
+};
 
-      const digits = (otpPhone || "").replace(/\D/g, "").slice(-10);
-      localStorage.setItem("customer_phone", digits);
-      setCustomerPhone(digits);
-
-      // Save name on signup if we have it; else keep existing or phone
-      const nameCandidate = (customerName || "").trim();
-      if (authMode === "signup" && nameCandidate) {
-        localStorage.setItem("customer_name", nameCandidate);
-        setCustomerName(nameCandidate);
-      } else {
-        // if none, fallback to phone
-        if (!localStorage.getItem("customer_name")) {
-          localStorage.setItem("customer_name", `+91${digits}`);
-          setCustomerName(`+91${digits}`);
-        }
-      }
 
       // close modal
       setAuthModalOpen(false);
