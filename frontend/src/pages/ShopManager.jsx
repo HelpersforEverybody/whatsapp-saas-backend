@@ -561,15 +561,16 @@ export default function ShopManager() {
             {/* Cart component (right column) */}
           <div className="mt-4">
   <Cart
-    items={cartItemsArray()}
-    totalQty={totalQty}
-    totalPrice={totalPrice}
-    onIncrement={(id) => increment(id)}
-    onDecrement={(id) => decrement(id)}
-    onRemove={(id) => setQty(id, 0)}
-    onPlaceOrder={() => setCartModalOpen(true)}
-    disabled={selectedShop ? !selectedShop.online : true}
-  />
+  items={cartItemsArray()}
+  totalQty={cartSummary().totalQty}
+  totalPrice={cartSummary().totalPrice}
+  onIncrement={(id) => increment(id)}
+  onDecrement={(id) => decrement(id)}
+  onRemove={(id) => setQty(id, 0)}
+  onPlaceOrder={() => setCartModalOpen(true)}
+  disabled={selectedShop ? !selectedShop.online : true}
+/>
+
 </div>
 
           </div>
