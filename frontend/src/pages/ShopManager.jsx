@@ -2,7 +2,7 @@
 import React, { useEffect, useState } from "react";
 import { getApiBase } from "../hooks/useApi";
 import Cart from "../components/Cart";
-import ProfileMenu from "../components/ProfileMenu";
+import ProfileMenu from "../components/ProfileMenu"; // keep as you had it
 
 const API_BASE = getApiBase();
 const API_KEY = import.meta.env.VITE_API_KEY || "";
@@ -25,7 +25,6 @@ export default function ShopManager() {
   const [customerToken, setCustomerToken] = useState(localStorage.getItem("customer_token") || "");
   const [customerName, setCustomerName] = useState(localStorage.getItem("customer_name") || "");
   const [customerPhone, setCustomerPhone] = useState(localStorage.getItem("customer_phone") || ""); // digits only
-  // simple inline error
   const [inlinePhoneError, setInlinePhoneError] = useState("");
 
   // Auth modal / OTP
@@ -39,6 +38,7 @@ export default function ShopManager() {
 
   // address modal
   const [addressModalOpen, setAddressModalOpen] = useState(false);
+  // authoritative addresses when logged in come from server
   const [addresses, setAddresses] = useState(() => {
     try {
       return JSON.parse(localStorage.getItem("customer_addresses") || "[]");
@@ -46,8 +46,9 @@ export default function ShopManager() {
       return [];
     }
   });
-  const [addressForm, setAddressForm] = useState({ name: "", phone: "", address: "", pincode: "" });
+  const [addressForm, setAddressForm] = useState({ name: "", phone: "", address: "", pincode: "", label: "Home" });
   const [addressMsg, setAddressMsg] = useState("");
+  const [addressEditIndex, setAddressEditIndex] = useState(null);
 
   // cart modal (confirm & choose address)
   const [cartModalOpen, setCartModalOpen] = useState(false);
@@ -58,6 +59,10 @@ export default function ShopManager() {
     setCustomerToken(localStorage.getItem("customer_token") || "");
     setCustomerName(localStorage.getItem("customer_name") || "");
     setCustomerPhone(localStorage.getItem("customer_phone") || "");
+    // if already logged in, fetch authoritative addresses
+    if (localStorage.getItem("customer_token")) {
+      fetchCustomerAddresses().catch(() => {});
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -86,7 +91,6 @@ export default function ShopManager() {
       const data = await res.json();
       setShops(data || []);
       if (data && data.length) {
-        // preserve previous selection if present
         const found = selectedShop && data.find(s => s._id === selectedShop._id) ? data.find(s => s._id === selectedShop._id) : data[0];
         setSelectedShop(found);
       } else {
@@ -160,130 +164,79 @@ export default function ShopManager() {
     setter(digits);
   }
 
-// -------------------------
-// Auth (OTP) helpers
-// -------------------------
-async function sendOtpToPhone(digits10, nameToKeepIfSignup) {
-  setAuthMsg("");
-  try {
-    const digits = String(digits10 || "").replace(/\D/g, "").slice(-10);
-    if (digits.length !== 10) {
-      setAuthMsg("Enter 10 digits to send OTP");
-      return;
-    }
-
-    // If signup mode, attempt to create customer first.
-    // If phone already exists, backend returns 409 -> inform user to login.
-    if (authMode === "signup") {
-      if (!nameToKeepIfSignup || !String(nameToKeepIfSignup).trim()) {
+  // -------------------------
+  // Auth (OTP) helpers
+  // -------------------------
+  async function sendOtpToPhone(digits10, nameToKeepIfSignup) {
+    setAuthMsg("");
+    try {
+      const digits = String(digits10 || "").replace(/\D/g, "").slice(-10);
+      if (digits.length !== 10) {
+        setAuthMsg("Enter 10 digits to send OTP");
+        return;
+      }
+      if (authMode === "signup" && (!nameToKeepIfSignup || !String(nameToKeepIfSignup).trim())) {
         setAuthMsg("Please enter your name to signup");
         return;
       }
-
-      const normalizedForSignup = `+91${digits}`;
-      try {
-        const signupRes = await fetch(`${API_BASE}/auth/customer-signup`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ name: nameToKeepIfSignup.trim(), phone: normalizedForSignup }),
-        });
-
-        if (signupRes.status === 409) {
-          // Already registered — ask to login instead of sending OTP
-          setAuthMsg("You are already registered. Please login.");
-          return;
-        }
-
-        if (!signupRes.ok) {
-          const txt = await signupRes.text();
-          throw new Error(txt || "Signup failed");
-        }
-
-        // signup created the customer; continue to send OTP below
-      } catch (err) {
-        console.error("signup check error", err);
-        setAuthMsg("Signup failed: " + (err.message || err));
-        return;
+      const normalized = `+91${digits}`;
+      const res = await fetch(`${API_BASE}/auth/send-otp`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ phone: normalized }),
+      });
+      if (!res.ok) {
+        const txt = await res.text();
+        throw new Error(txt || "Failed to send OTP");
       }
-    } // end signup pre-check
-
-    // Now send OTP (same for login or successful signup)
-    const normalized = `+91${digits}`;
-    const res = await fetch(`${API_BASE}/auth/send-otp`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ phone: normalized }),
-    });
-    if (!res.ok) {
-      const txt = await res.text();
-      throw new Error(txt || "Failed to send OTP");
+      setOtpSent(true);
+      setOtpPhone(normalized);
+      setOtpDigitsInput(digits);
+      setAuthMsg("OTP sent — check server logs (demo).");
+      // if signup, keep name in customerName state so verify can store it
+      if (authMode === "signup" && nameToKeepIfSignup) {
+        setCustomerName(nameToKeepIfSignup);
+      }
+    } catch (e) {
+      console.error("sendOtp error", e);
+      setAuthMsg("Error sending OTP: " + (e.message || e));
     }
-    setOtpSent(true);
-    setOtpPhone(normalized);
-    setOtpDigitsInput(digits);
-    setAuthMsg("OTP sent — check server logs (demo).");
-    // if signup, keep name in customerName state so verify can store it
-    if (authMode === "signup" && nameToKeepIfSignup) {
-      setCustomerName(nameToKeepIfSignup);
-    }
-  } catch (e) {
-    console.error("sendOtp error", e);
-    setAuthMsg("Error sending OTP: " + (e.message || e));
   }
-}
 
-
-  // NOTE: use authMode (login/signup). On signup include name + signup:true
+  // verify OTP and login (or signup + login)
   async function verifyOtpAndLogin() {
     setAuthMsg("");
     try {
-      if (!otpPhone || !otpCode) {
-        setAuthMsg("Phone and OTP required");
-        return;
-      }
-
-      const payload = { phone: otpPhone, otp: otpCode };
-      if (authMode === "signup") {
-        payload.name = customerName || "";
-        payload.signup = true;
-      }
-
+      if (!otpPhone || !otpCode) { setAuthMsg("Phone and OTP required"); return; }
+      // POST /auth/verify-otp returns token and customer info
       const res = await fetch(`${API_BASE}/auth/verify-otp`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
+        body: JSON.stringify({ phone: otpPhone, otp: otpCode }),
       });
-
-      const data = await res.json();
-
       if (!res.ok) {
-        // backend returns json error
-        setAuthMsg("Verify failed: " + (data && data.error ? data.error : JSON.stringify(data)));
-        console.error("verifyOtp error", data);
-        return;
+        const txt = await res.text();
+        throw new Error(txt || "OTP verify failed");
       }
-
-      if (data && data.token) {
-        // Save to localStorage and local state
-        localStorage.setItem("customer_token", data.token);
-        localStorage.setItem("customer_phone", (data.phone || otpPhone).replace(/\D/g, "").slice(-10));
-        localStorage.setItem("customer_name", data.name || (customerName || ""));
-
-        setCustomerToken(data.token);
-        setCustomerPhone((data.phone || otpPhone).replace(/\D/g, "").slice(-10));
-        setCustomerName(data.name || (customerName || ""));
-
-        // close auth UI
-        setAuthModalOpen(false);
-        setOtpSent(false);
-        setOtpCode("");
-        setAuthMsg("Logged in");
-      } else {
-        setAuthMsg("Verify failed: invalid response");
-      }
+      const data = await res.json(); // { token, userId, phone, name }
+      if (!data.token) throw new Error("No token returned");
+      // save token and canonical customer info
+      localStorage.setItem("customer_token", data.token);
+      localStorage.setItem("customer_phone", (data.phone || "").replace(/\D/g, "").slice(-10) || otpDigitsInput || "");
+      localStorage.setItem("customer_name", (data.name || customerName || "").trim() || "");
+      setCustomerToken(data.token);
+      setCustomerPhone((data.phone || "").replace(/\D/g, "").slice(-10) || "");
+      setCustomerName((data.name || customerName || "").trim() || "");
+      // fetch authoritative addresses from server
+      await fetchCustomerAddresses();
+      // close auth UI
+      setAuthModalOpen(false);
+      setOtpSent(false);
+      setOtpCode("");
+      setAuthMsg("Logged in");
     } catch (e) {
       console.error("verifyOtp error", e);
-      setAuthMsg("Verify failed: " + (e.message || String(e)));
+      setAuthMsg("Verify failed: " + (e.message || e));
     }
   }
 
@@ -294,15 +247,41 @@ async function sendOtpToPhone(digits10, nameToKeepIfSignup) {
     setCustomerToken("");
     setCustomerName("");
     setCustomerPhone("");
+    // keep addresses in localStorage as guest fallback
   }
 
   // -------------------------
-  // Addresses (client-side localStorage)
+  // Addresses (server-aware)
   // -------------------------
+  async function fetchCustomerAddresses() {
+    try {
+      const token = localStorage.getItem("customer_token");
+      if (!token) {
+        // no logged in user; keep local fallback
+        return;
+      }
+      const res = await fetch(`${API_BASE}/api/customers/addresses`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (!res.ok) {
+        // don't blow up UI if addresses can't be fetched
+        throw new Error("Failed to load addresses");
+      }
+      const data = await res.json();
+      // ensure first address visible as default client-side
+      setAddresses(Array.isArray(data) ? data : []);
+      localStorage.setItem("customer_addresses", JSON.stringify(Array.isArray(data) ? data : []));
+    } catch (e) {
+      console.error("fetchCustomerAddresses error", e);
+      // do nothing, keep existing addresses
+    }
+  }
+
   function saveAddressesToStore(arr) {
     setAddresses(arr);
     localStorage.setItem("customer_addresses", JSON.stringify(arr));
   }
+
   function validateAddressForm(form) {
     if (!form.name || form.name.trim().length < 2) return "Name required";
     const digits = (form.phone || "").replace(/\D/g, "");
@@ -311,29 +290,97 @@ async function sendOtpToPhone(digits10, nameToKeepIfSignup) {
     if (!/^\d{6}$/.test(String(form.pincode || "").trim())) return "Pincode must be 6 digits";
     return null;
   }
+
   function openAddAddressModal(editIndex = null) {
+    setAddressEditIndex(editIndex);
     if (typeof editIndex === "number") {
       setAddressForm({ ...addresses[editIndex] });
     } else {
-      setAddressForm({ name: "", phone: "", address: "", pincode: selectedShop?.pincode || "" });
+      setAddressForm({
+        name: customerName || "",
+        phone: customerPhone || "",
+        address: "",
+        pincode: selectedShop?.pincode || "",
+        label: "Home"
+      });
     }
     setAddressMsg("");
     setAddressModalOpen(true);
   }
-  function addOrUpdateAddress(editIndex = null) {
+
+  // add or update (server if logged-in)
+  async function addOrUpdateAddress(editIndex = null) {
     const err = validateAddressForm(addressForm);
-    if (err) {
-      setAddressMsg(err);
+    if (err) { setAddressMsg(err); return; }
+    const token = localStorage.getItem("customer_token");
+    if (token) {
+      try {
+        if (typeof editIndex === "number" && addresses[editIndex] && addresses[editIndex]._id) {
+          const id = addresses[editIndex]._id;
+          const res = await fetch(`${API_BASE}/api/customers/addresses/${id}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+            body: JSON.stringify(addressForm)
+          });
+          if (!res.ok) {
+            const txt = await res.text(); throw new Error(txt || "Failed to update address");
+          }
+          await fetchCustomerAddresses();
+        } else {
+          const res = await fetch(`${API_BASE}/api/customers/addresses`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+            body: JSON.stringify(addressForm)
+          });
+          if (!res.ok) {
+            const txt = await res.text(); throw new Error(txt || "Failed to add address");
+          }
+          await fetchCustomerAddresses();
+        }
+        setAddressModalOpen(false);
+        setAddressMsg("");
+      } catch (e) {
+        console.error("addOrUpdateAddress error", e);
+        setAddressMsg("Save failed: " + (e.message || e));
+      }
       return;
     }
+    // guest fallback (local)
     const copy = [...addresses];
     if (typeof editIndex === "number") copy[editIndex] = { ...addressForm };
     else copy.push({ ...addressForm });
-    // make first address default by keeping order and adding a "default" flag if needed
     saveAddressesToStore(copy);
     setAddressModalOpen(false);
   }
-  function deleteAddress(idx) {
+
+  async function deleteAddress(idx) {
+    const token = localStorage.getItem("customer_token");
+    if (token && addresses[idx] && addresses[idx]._id) {
+      try {
+        // prevent deleting default first address client-side; require user to set another default first
+        // (Simple rule: if idx===0 and there are >1 addresses, require user to Set Default first)
+        if (idx === 0 && (addresses.length > 1)) {
+          // optional: allow delete but for now ask user to set another default
+          const proceed = window.confirm("This is your first address (default). Make another address default before deleting. Set another default now?");
+          if (!proceed) return;
+        }
+        const id = addresses[idx]._id;
+        const res = await fetch(`${API_BASE}/api/customers/addresses/${id}`, {
+          method: "DELETE",
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        if (!res.ok) {
+          const txt = await res.text(); throw new Error(txt || "Delete failed");
+        }
+        await fetchCustomerAddresses();
+        return;
+      } catch (e) {
+        console.error("deleteAddress error", e);
+        alert("Delete failed: " + (e.message || e));
+        return;
+      }
+    }
+    // guest fallback
     const copy = [...addresses];
     copy.splice(idx, 1);
     saveAddressesToStore(copy);
@@ -360,7 +407,12 @@ async function sendOtpToPhone(digits10, nameToKeepIfSignup) {
       shop: selectedShop._id,
       customerName: selectedAddress.name,
       phone: `+91${(selectedAddress.phone || "").replace(/\D/g, "").slice(-10)}`,
-      address: selectedAddress.address,
+      address: {
+        label: selectedAddress.label || "",
+        address: selectedAddress.address,
+        phone: selectedAddress.phone || "",
+        pincode: selectedAddress.pincode || ""
+      },
       items: items.map(i => ({ name: i.name, qty: i.qty, price: i.price })),
     };
 
@@ -401,13 +453,18 @@ async function sendOtpToPhone(digits10, nameToKeepIfSignup) {
             onLogout={logoutCustomer}
             addresses={addresses}
             onOpenAddressModal={() => openAddAddressModal()}
+            onManageAddresses={() => {
+              // open addresses modal list (reuse cart modal style or address modal)
+              // we'll open cartModalOpen acting as addresses viewer for now
+              setCartModalOpen(true);
+            }}
           />
         </div>
       );
     }
     return (
       <div>
-        <button onClick={() => { setAuthMode("login"); setOtpSent(false); setAuthModalOpen(true); }} className="px-3 py-1 bg-blue-600 text-white rounded">Login / Signup</button>
+        <button onClick={() => { setAuthMode("login"); setAuthModalOpen(true); }} className="px-3 py-1 bg-blue-600 text-white rounded">Login / Signup</button>
       </div>
     );
   }
@@ -478,6 +535,10 @@ async function sendOtpToPhone(digits10, nameToKeepIfSignup) {
                 </div>
               ))
             }
+
+            <div className="mt-3">
+              <button onClick={() => openAddAddressModal()} className="px-3 py-1 bg-gray-200 rounded">Add Delivery Address</button>
+            </div>
           </div>
 
           <div className="col-span-2">
@@ -497,7 +558,6 @@ async function sendOtpToPhone(digits10, nameToKeepIfSignup) {
                     </div>
 
                     <div className="flex items-center gap-4">
-                      {/* Add to Cart controls */}
                       {!item.available ? (
                         <button className="px-3 py-1 bg-gray-300 rounded" disabled>Unavailable</button>
                       ) : getQty(item._id) <= 0 ? (
@@ -585,6 +645,29 @@ async function sendOtpToPhone(digits10, nameToKeepIfSignup) {
         </div>
       )}
 
+      {/* Address modal */}
+      {addressModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+          <div className="bg-white p-4 rounded w-[480px]">
+            <h3 className="font-semibold mb-2">{typeof addressEditIndex === "number" ? "Edit Address" : "Add Address"}</h3>
+            <div className="grid grid-cols-1 gap-2">
+              <input value={addressForm.name} onChange={e => setAddressForm(f => ({ ...f, name: e.target.value }))} placeholder="Name" className="p-2 border rounded" />
+              <div className="flex">
+                <span className="px-3 py-2 bg-gray-100 select-none">+91</span>
+                <input value={addressForm.phone} onChange={e => setAddressForm(f => ({ ...f, phone: e.target.value.replace(/\D/g,'').slice(0,10) }))} placeholder="10-digit phone" className="p-2 border rounded flex-1" />
+              </div>
+              <textarea value={addressForm.address} onChange={e => setAddressForm(f => ({ ...f, address: e.target.value }))} placeholder="Address" className="p-2 border rounded h-24" />
+              <input value={addressForm.pincode} onChange={e => setAddressForm(f => ({ ...f, pincode: e.target.value.replace(/\D/g,'').slice(0,6) }))} placeholder="Pincode (6 digits)" className="p-2 border rounded" />
+            </div>
+            <div className="mt-3 flex justify-end gap-2">
+              <button onClick={() => { setAddressModalOpen(false); setAddressMsg(""); }} className="px-3 py-1 bg-gray-200 rounded">Cancel</button>
+              <button onClick={() => addOrUpdateAddress(addressEditIndex)} className="px-3 py-1 bg-blue-600 text-white rounded">Save</button>
+            </div>
+            {addressMsg && <div className="mt-2 text-sm text-red-600">{addressMsg}</div>}
+          </div>
+        </div>
+      )}
+
       {/* Cart modal (confirm & place order) */}
       {cartModalOpen && (
         <Cart
@@ -592,8 +675,9 @@ async function sendOtpToPhone(digits10, nameToKeepIfSignup) {
           totalQty={cartSummary().totalQty}
           totalPrice={cartSummary().totalPrice}
           addresses={addresses}
-          onAddAddress={() => openAddAddressModal()}
-          onDeleteAddress={deleteAddress}
+          onAddAddress={() => openAddAddressModal(null)}
+          onEditAddress={(idx) => openAddAddressModal(idx)}
+          onDeleteAddress={(idx) => deleteAddress(idx)}
           onClose={() => setCartModalOpen(false)}
           onConfirm={async (addressIdx) => {
             const chosen = addresses[addressIdx];
