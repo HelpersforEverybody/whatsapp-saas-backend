@@ -290,7 +290,7 @@ app.post('/auth/merchant-login', async (req, res) => {
     console.error('Merchant login error', e);
     return res.status(500).json({ error: 'server error' });
   }
-}
+});
 
 /* Customer signup & OTP flow */
 
@@ -306,7 +306,6 @@ function normalizePhoneInput(phone) {
 }
 
 // Customer signup (name + phone required)
-// Creates a customer record - phone must be 10-digit local or with +91 prefix
 app.post('/auth/customer-signup', async (req, res) => {
   try {
     const { name, phone } = req.body || {};
@@ -315,7 +314,6 @@ app.post('/auth/customer-signup', async (req, res) => {
     const normalized = normalizePhoneInput(phone);
     if (!normalized) return res.status(400).json({ error: 'invalid phone format; provide 10 digit local phone or full international number' });
 
-    // check existing
     const exists = await Customer.findOne({ phone: normalized });
     if (exists) return res.status(409).json({ error: 'phone already registered, please login' });
 
@@ -347,7 +345,6 @@ app.post('/auth/send-otp', async (req, res) => {
     otpStore.set(normalized, { otp, expiresAt });
     console.log(`[OTP] send-otp to ${normalized}: ${otp} (expires in 5m)`);
 
-    // optionally send via Twilio (non-blocking)
     if (twClient && TWILIO_FROM) {
       sendWhatsAppMessageSafe(normalized, `Your OTP: ${otp}`);
     }
@@ -715,9 +712,8 @@ app.get('/api/customers/addresses', requireCustomer, async (req, res) => {
 app.post('/api/customers/addresses', requireCustomer, async (req, res) => {
   try {
     const { label, address, phone, pincode } = req.body || {};
-    if (!address || !pincode || !req.body.name) { /* name not required here; UI will handle */ }
     if (!address || !pincode) return res.status(400).json({ error: 'address and pincode required' });
-    // normalize phone if provided
+
     let phoneNorm = '';
     if (phone) {
       const digits = String(phone).replace(/\D/g, '');
@@ -726,7 +722,6 @@ app.post('/api/customers/addresses', requireCustomer, async (req, res) => {
     const addr = { label: label || '', address, phone: phoneNorm, pincode: String(pincode).trim() };
     const cust = await Customer.findById(req.customerId);
     if (!cust) return res.status(404).json({ error: 'not found' });
-    // default-first-address behavior (frontend will manage default flag). For safety, ensure at least one address exists.
     cust.addresses.push(addr);
     await cust.save();
     res.status(201).json(cust.addresses[cust.addresses.length - 1]);
@@ -835,7 +830,7 @@ app.post('/webhook/whatsapp', async (req, res) => {
         const item = await MenuItem.findOne({ shop: shop._id, externalId: itemExt });
         if (!item) twiml.message(`Item ${itemExt} not found.`);
         else {
-          const orderPayload = { shop: shop._id, customerName: `WhatsApp:${from}`, phone: from.replace(/^whatsapp:/, ''), items: [{ name: item.name, qty, price: item.price }] };
+          const orderPayload = { shop: shop._1d, customerName: `WhatsApp:${from}`, phone: from.replace(/^whatsapp:/, ''), items: [{ name: item.name, qty, price: item.price }] };
           const total = item.price * qty;
           const order = await Order.create({ ...orderPayload, total });
           sendWhatsAppMessageSafe(shop.phone, `📥 New order ${order._id} from ${order.phone} — ${item.name} x${qty} — ₹${total}`).catch(() => {});
