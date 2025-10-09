@@ -7,7 +7,7 @@ import MerchantSignup from "./pages/MerchantSignup";
 import MerchantLogin from "./pages/MerchantLogin";
 import OwnerDashboard from "./pages/OwnerDashboard";
 import CustomerOtpLogin from "./pages/CustomerOtpLogin";
-import Cart from "./pages/Cart";
+import Cart from "./components/Cart";
 import CustomerDashboard from "./pages/CustomerDashboard";
 import ProfileMenu from "./components/ProfileMenu";
 
