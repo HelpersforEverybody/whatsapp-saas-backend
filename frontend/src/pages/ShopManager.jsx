@@ -40,16 +40,21 @@ export default function ShopManager() {
   const [otpCode, setOtpCode] = useState("");
   const [authMsg, setAuthMsg] = useState("");
 
-  const [addressModalOpen, setAddressModalOpen] = useState(false);
+  // addresses: each object: { name, phone (10 digits), address, pincode, default: boolean }
   const [addresses, setAddresses] = useState(() => {
     try {
-      return JSON.parse(localStorage.getItem("customer_addresses") || "[]");
+      const a = JSON.parse(localStorage.getItem("customer_addresses") || "[]");
+      // ensure at least first is default if present
+      if (Array.isArray(a) && a.length > 0 && !a.find(x => x.default)) {
+        a[0].default = true;
+      }
+      return a;
     } catch {
       return [];
     }
   });
-  const [addressForm, setAddressForm] = useState({ name: "", phone: "", address: "", pincode: "" });
   const [addressMsg, setAddressMsg] = useState("");
+
 
   const [cartModalOpen, setCartModalOpen] = useState(false);
 
@@ -261,52 +266,64 @@ export default function ShopManager() {
     setCustomerPhone("");
   }
 
-  // Addresses: add/edit/delete stored in localStorage
+    // ---------- Address helpers (parent-managed, used by Cart modal) ----------
+  function persistAddresses(arr) {
+    // ensure default exists
+    const copy = Array.isArray(arr) ? arr.slice() : [];
+    if (copy.length > 0 && !copy.find(x => x.default)) {
+      copy[0].default = true;
+    }
+    setAddresses(copy);
+    localStorage.setItem("customer_addresses", JSON.stringify(copy));
+  }
+
   function saveAddressesToStore(arr) {
-    setAddresses(arr);
-    localStorage.setItem("customer_addresses", JSON.stringify(arr));
+    persistAddresses(arr);
   }
 
-  function openAddAddressModal(editIndex = null) {
-    if (typeof editIndex === "number") {
-      setAddressForm({ ...addresses[editIndex] });
+  // Add or update an address: if editIndex is null -> add, else update index
+  function addOrUpdateAddressFromCart(form, editIndex = null) {
+    // validate
+    if (!form || !form.name || String(form.name).trim().length < 2) throw new Error("Name required");
+    if (!/^\d{10}$/.test(String(form.phone || "").replace(/\D/g, ""))) throw new Error("Phone must be 10 digits");
+    if (!form.address || String(form.address).trim().length < 5) throw new Error("Address required");
+    if (!/^\d{6}$/.test(String(form.pincode || "").trim())) throw new Error("Pincode must be 6 digits");
+
+    const copy = addresses.slice();
+    if (typeof editIndex === "number" && editIndex >= 0 && editIndex < copy.length) {
+      copy[editIndex] = { ...form, phone: String(form.phone).replace(/\D/g, "").slice(-10), default: !!copy[editIndex].default };
     } else {
-      setAddressForm({ name: customerName || "", phone: customerPhone || "", address: "", pincode: "" });
+      // new address: make default if this is first address
+      const isDefault = copy.length === 0;
+      copy.push({ ...form, phone: String(form.phone).replace(/\D/g, "").slice(-10), default: !!isDefault });
     }
-    setAddressMsg("");
-    setAddressModalOpen(true);
+    persistAddresses(copy);
+    return copy;
   }
 
-  function validateAddressForm(form) {
-    if (!form.name || form.name.trim().length < 2) return "Name required";
-    const digits = (form.phone || "").replace(/\D/g, "");
-    if (digits.length !== 10) return "Phone must be 10 digits";
-    if (!form.address || form.address.trim().length < 5) return "Address required";
-    if (!/^\d{6}$/.test(String(form.pincode || "").trim())) return "Pincode must be 6 digits";
-    return null;
-  }
-
-  function addOrUpdateAddress(editIndex = null) {
-    const err = validateAddressForm(addressForm);
-    if (err) {
-      setAddressMsg(err);
-      return;
+  // Delete address (parent enforces default rules)
+  function deleteAddressFromCart(idx) {
+    if (idx < 0 || idx >= addresses.length) throw new Error("invalid index");
+    // if the address is default and it's the only one -> don't allow
+    if (addresses[idx].default && addresses.length === 1) {
+      throw new Error("Default address cannot be deleted. Add another address and set it default first.");
     }
-    const copy = [...addresses];
-    if (typeof editIndex === "number") {
-      copy[editIndex] = { ...addressForm };
-    } else {
-      copy.push({ ...addressForm });
-    }
-    saveAddressesToStore(copy);
-    setAddressModalOpen(false);
-  }
-
-  function deleteAddress(idx) {
-    const copy = [...addresses];
+    const copy = addresses.slice();
     copy.splice(idx, 1);
-    saveAddressesToStore(copy);
+    // if removed default, ensure some default exists
+    if (!copy.find(x => x.default) && copy.length > 0) copy[0].default = true;
+    persistAddresses(copy);
+    return copy;
   }
+
+  // Set default address index
+  function setDefaultAddress(idx) {
+    if (idx < 0 || idx >= addresses.length) throw new Error("invalid index");
+    const copy = addresses.map((a, i) => ({ ...a, default: i === idx }));
+    persistAddresses(copy);
+    return copy;
+  }
+
 
   // Final place order called from Cart -> confirm
   async function placeOrderFinal(selectedAddress) {
@@ -563,45 +580,70 @@ export default function ShopManager() {
             )}
 
             {/* Cart component (right column) */}
-            <div className="mt-4">
-              <Cart
-                items={cartItemsArray()}
-                totalQty={cartSummary().totalQty}
-                totalPrice={cartSummary().totalPrice}
-                onIncrement={(id) => increment(id)}
-                onDecrement={(id) => decrement(id)}
-                onRemove={(id) => setQty(id, 0)}
-                onPlaceOrder={() => setCartModalOpen(true)}
-                disabled={selectedShop ? !selectedShop.online : true}
-              />
-            </div>
+          <div className="mt-4">
+  <Cart
+    items={cartItemsArray()}
+    totalQty={totalQty}
+    totalPrice={totalPrice}
+    onIncrement={(id) => increment(id)}
+    onDecrement={(id) => decrement(id)}
+    onRemove={(id) => setQty(id, 0)}
+    onPlaceOrder={() => setCartModalOpen(true)}
+    disabled={selectedShop ? !selectedShop.online : true}
+  />
+</div>
+
           </div>
         </div>
       </div>
 
       {/* Cart modal */}
-      {cartModalOpen && (
-        <Cart
-          modal
-          onClose={() => setCartModalOpen(false)}
-          items={cartSummary().items}
-          total={cartSummary().totalPrice}
-          addresses={addresses}
-          onAddAddress={() => openAddAddressModal()}
-          onDeleteAddress={deleteAddress}
-          onSaveAddress={(addr) => { saveAddressesToStore([...addresses, addr]); }}
-          onConfirm={async (addressIdx) => {
-            const chosen = addresses[addressIdx];
-            const result = await placeOrderFinal(chosen);
-            if (result.ok) {
-              alert("Order placed successfully");
-              setCartModalOpen(false);
-            } else {
-              alert("Order failed: " + (result.message || "unknown"));
-            }
-          }}
-        />
-      )}
+{cartModalOpen && (
+  <Cart
+    modal={true}
+    items={cartSummary().items}
+    total={cartSummary().totalPrice}
+    onIncrement={(id) => increment(id)}
+    onDecrement={(id) => decrement(id)}
+    onRemove={(id) => setQty(id, 0)}
+    addresses={addresses}
+    onAddOrUpdateAddress={async (addr, editIndex) => {
+      try {
+        const updated = addOrUpdateAddressFromCart(addr, typeof editIndex === "number" ? editIndex : null);
+        return updated;
+      } catch (e) {
+        throw e;
+      }
+    }}
+    onDeleteAddress={async (idx) => {
+      try {
+        const updated = deleteAddressFromCart(idx);
+        return updated;
+      } catch (e) {
+        throw e;
+      }
+    }}
+    onSetDefault={async (idx) => {
+      try {
+        const updated = setDefaultAddress(idx);
+        return updated;
+      } catch (e) {
+        throw e;
+      }
+    }}
+    onConfirm={async (addressIdx) => {
+      // call the parent placeOrderFinal which already verifies pincode and auth
+      if (addressIdx < 0 || addressIdx >= addresses.length) {
+        return { ok: false, message: "Select an address" };
+      }
+      const addr = addresses[addressIdx];
+      const res = await placeOrderFinal(addr);
+      return res;
+    }}
+    onClose={() => setCartModalOpen(false)}
+  />
+)}
+
     </div>
   );
 }
