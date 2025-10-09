@@ -1,20 +1,23 @@
 // frontend/src/pages/ShopManager.jsx
 import React, { useEffect, useState } from "react";
 import { getApiBase } from "../hooks/useApi";
+import { useNavigate } from "react-router-dom";
 
 const API_BASE = getApiBase();
 const API_KEY = import.meta.env.VITE_API_KEY || "";
 
 export default function ShopManager() {
+  const navigate = useNavigate();
+
   const [shops, setShops] = useState([]);
   const [selectedShop, setSelectedShop] = useState(null);
   const [menu, setMenu] = useState([]);
   const [loading, setLoading] = useState(false);
 
   // customer info (simple)
-  const [customerName, setCustomerName] = useState("");
+  const [customerName, setCustomerName] = useState(localStorage.getItem("customer_name") || "");
   // store only 10-digit numeric string here (we show +91 in UI)
-  const [customerPhone, setCustomerPhone] = useState("");
+  const [customerPhone, setCustomerPhone] = useState(localStorage.getItem("customer_phone") || "");
   // start empty — do NOT auto-apply saved pincode on load
   const [pincode, setPincode] = useState("");
   const [pincodeErr, setPincodeErr] = useState("");
@@ -41,6 +44,10 @@ export default function ShopManager() {
   // On mount: load all shops (no pincode applied)
   useEffect(() => {
     loadShops();
+    // ensure badge state reflects storage
+    setCustomerToken(localStorage.getItem("customer_token") || "");
+    setCustomerName(localStorage.getItem("customer_name") || "");
+    setCustomerPhone(localStorage.getItem("customer_phone") || "");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -69,7 +76,13 @@ export default function ShopManager() {
       setShops(data);
       if (data.length) {
         // preserve previous selected shop when possible, else pick first
-        const found = selectedShop && data.find(s => selectedShop && s._id === selectedShop._id) ? data.find(s => s._id === selectedShop._id) : data[0];
+        const found =
+          selectedShop &&
+          data.find(
+            (s) => selectedShop && s._id === selectedShop._id
+          )
+            ? data.find((s) => s._id === selectedShop._id)
+            : data[0];
         setSelectedShop(found);
       } else {
         setSelectedShop(null);
@@ -100,7 +113,7 @@ export default function ShopManager() {
   }
 
   function setQty(itemId, qty) {
-    setCart(prev => {
+    setCart((prev) => {
       const copy = { ...prev };
       if (!qty || qty <= 0) {
         delete copy[itemId];
@@ -127,9 +140,9 @@ export default function ShopManager() {
   }
 
   function cartItemsArray() {
-    return Object.keys(cart).map(id => {
+    return Object.keys(cart).map((id) => {
       const qty = cart[id];
-      const item = menu.find(m => String(m._id) === String(id));
+      const item = menu.find((m) => String(m._id) === String(id));
       return {
         _id: id,
         qty,
@@ -215,13 +228,24 @@ export default function ShopManager() {
       const data = await res.json(); // { token, userId }
       if (!data.token) throw new Error("No token returned");
       localStorage.setItem("customer_token", data.token);
+      // persist small profile info for the badge
+      const digits = (otpPhone || "").replace(/\D/g, "").slice(-10);
+      const phoneDigits = digits || otpDigitsInput || customerPhone;
+      localStorage.setItem("customer_phone", phoneDigits);
+      // prefer explicit customerName input if present
+      if (customerName && customerName.trim()) {
+        localStorage.setItem("customer_name", customerName.trim());
+      } else {
+        // fallback store phone as name
+        localStorage.setItem("customer_name", `+91${phoneDigits}`);
+      }
       setCustomerToken(data.token);
+      setCustomerName(localStorage.getItem("customer_name") || "");
+      setCustomerPhone(localStorage.getItem("customer_phone") || "");
       setAuthModalOpen(false);
       setOtpSent(false);
       setOtpCode("");
       setAuthMsg("Logged in");
-      // set phone input to digits only (strip +91)
-      setCustomerPhone((otpPhone || "").replace(/\D/g, "").slice(-10));
     } catch (e) {
       console.error("verifyOtp error", e);
       setAuthMsg("Verify failed: " + (e.message || e));
@@ -230,7 +254,11 @@ export default function ShopManager() {
 
   function logoutCustomer() {
     localStorage.removeItem("customer_token");
+    localStorage.removeItem("customer_name");
+    localStorage.removeItem("customer_phone");
     setCustomerToken("");
+    setCustomerName("");
+    setCustomerPhone("");
   }
 
   // Address helpers
@@ -300,7 +328,7 @@ export default function ShopManager() {
       customerName,
       phone: `+91${phoneDigits}`,
       address: savedAddr.trim(),
-      items: items.map(i => ({ name: i.name, qty: i.qty, price: i.price })),
+      items: items.map((i) => ({ name: i.name, qty: i.qty, price: i.price })),
     };
 
     try {
@@ -311,14 +339,14 @@ export default function ShopManager() {
           "x-api-key": API_KEY,
           ...(customerToken ? { Authorization: `Bearer ${customerToken}` } : {}),
         },
-        body: JSON.stringify(payload)
+        body: JSON.stringify(payload),
       });
       if (!res.ok) {
         const txt = await res.text();
         throw new Error(txt || "Order failed");
       }
       const order = await res.json();
-      alert("Order placed: " + (order.orderNumber ? `#${String(order.orderNumber).padStart(6,'0')}` : String(order._id).slice(0,8)));
+      alert("Order placed: " + (order.orderNumber ? `#${String(order.orderNumber).padStart(6, "0")}` : String(order._id).slice(0, 8)));
       setCart({});
     } catch (e) {
       console.error("Order failed", e);
@@ -346,10 +374,7 @@ export default function ShopManager() {
     if (!qty || qty <= 0) {
       return (
         <div>
-          <button
-            onClick={() => addInitial(id)}
-            className="px-3 py-1 bg-green-600 text-white rounded"
-          >
+          <button onClick={() => addInitial(id)} className="px-3 py-1 bg-green-600 text-white rounded">
             Add
           </button>
         </div>
@@ -358,26 +383,60 @@ export default function ShopManager() {
 
     return (
       <div className="flex items-center gap-2">
-        <button onClick={() => decrement(id)} className="px-2 py-1 bg-gray-200 rounded" aria-label="decrement">−</button>
+        <button onClick={() => decrement(id)} className="px-2 py-1 bg-gray-200 rounded" aria-label="decrement">
+          −
+        </button>
         <div className="px-3 py-1 border rounded">{qty}</div>
-        <button onClick={() => increment(id)} className="px-2 py-1 bg-gray-200 rounded" aria-label="increment">+</button>
+        <button onClick={() => increment(id)} className="px-2 py-1 bg-gray-200 rounded" aria-label="increment">
+          +
+        </button>
       </div>
     );
   }
 
   const { totalQty, totalPrice } = cartSummary();
 
+  // Top-right badge: shows login status and profile link
+  function TopRightBadge() {
+    if (customerToken) {
+      const displayName = customerName && customerName.trim() ? customerName : `+91${(customerPhone || "").slice(-10)}`;
+      return (
+        <div className="flex items-center gap-3">
+          <div className="text-sm text-gray-700">Logged in as <b>{displayName}</b></div>
+          <button
+            onClick={() => navigate("/profile")}
+            className="px-2 py-1 bg-gray-100 border rounded text-sm"
+          >
+            Profile
+          </button>
+          <button onClick={logoutCustomer} className="px-2 py-1 bg-red-500 text-white rounded text-sm">Logout</button>
+        </div>
+      );
+    }
+    return (
+      <div>
+        <button onClick={() => setAuthModalOpen(true)} className="px-3 py-1 bg-blue-600 text-white rounded">Login</button>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen p-6 bg-gray-50">
       <div className="max-w-5xl mx-auto bg-white p-6 rounded shadow">
-        <h1 className="text-2xl font-semibold mb-4">Shops & Menu</h1>
+        <div className="flex items-start justify-between mb-4">
+          <h1 className="text-2xl font-semibold">Shops & Menu</h1>
+          <TopRightBadge />
+        </div>
 
         {/* Top form */}
         <div className="mb-4 p-4 border rounded bg-gray-50">
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
             <input
               value={customerName}
-              onChange={(e) => setCustomerName(e.target.value)}
+              onChange={(e) => {
+                setCustomerName(e.target.value);
+                localStorage.setItem("customer_name", e.target.value || "");
+              }}
               placeholder="Your Name"
               className="p-2 border rounded w-full"
             />
@@ -396,6 +455,7 @@ export default function ShopManager() {
                   onChange={(e) => {
                     const digits = e.target.value.replace(/\D/g, "").slice(0, 10);
                     setCustomerPhone(digits);
+                    localStorage.setItem("customer_phone", digits || "");
                     setInlinePhoneError("");
                   }}
                   onBlur={handlePhoneBlur}
@@ -403,9 +463,7 @@ export default function ShopManager() {
                   className="p-2 flex-1 outline-none"
                 />
               </div>
-              {inlinePhoneError ? (
-                <div className="text-sm text-red-600 mt-1">{inlinePhoneError}</div>
-              ) : null}
+              {inlinePhoneError ? <div className="text-sm text-red-600 mt-1">{inlinePhoneError}</div> : null}
               {/* show login badge when logged in */}
               {customerToken ? (
                 <div className="text-xs text-green-700 mt-1">Logged in</div>
@@ -418,18 +476,38 @@ export default function ShopManager() {
             <div>
               <input
                 value={pincode}
-                onChange={(e) => { setPincode(e.target.value.replace(/\D/g, '').slice(0,6)); setPincodeErr(""); }}
+                onChange={(e) => {
+                  setPincode(e.target.value.replace(/\D/g, "").slice(0, 6));
+                  setPincodeErr("");
+                }}
                 placeholder="Filter by pincode (6 digits)"
                 className="p-2 border rounded w-full"
               />
               <div className="flex gap-2 mt-2">
-                <button onClick={() => {
-                  if (!validatePincode(pincode)) { setPincodeErr("Enter 6 digits"); return; }
-                  // persist and apply
-                  setAndApplyPincode(pincode);
-                  loadShops();
-                }} className="px-3 py-1 bg-blue-600 text-white rounded">Apply</button>
-                <button onClick={() => { setPincode(''); setAndApplyPincode(''); loadShops(); }} className="px-3 py-1 bg-gray-200 rounded">Clear</button>
+                <button
+                  onClick={() => {
+                    if (!validatePincode(pincode)) {
+                      setPincodeErr("Enter 6 digits");
+                      return;
+                    }
+                    // persist and apply
+                    setAndApplyPincode(pincode);
+                    loadShops();
+                  }}
+                  className="px-3 py-1 bg-blue-600 text-white rounded"
+                >
+                  Apply
+                </button>
+                <button
+                  onClick={() => {
+                    setPincode("");
+                    setAndApplyPincode("");
+                    loadShops();
+                  }}
+                  className="px-3 py-1 bg-gray-200 rounded"
+                >
+                  Clear
+                </button>
               </div>
               {pincodeErr ? <div className="text-sm text-red-600 mt-1">{pincodeErr}</div> : null}
             </div>
@@ -458,19 +536,49 @@ export default function ShopManager() {
                     />
                   </div>
                   <div className="mt-3 flex justify-end gap-2">
-                    <button onClick={() => { setAuthModalOpen(false); setAuthMsg(""); setOtpDigitsInput(""); }} className="px-3 py-1 bg-gray-200 rounded">Cancel</button>
-                    <button onClick={() => sendOtpToPhone(otpDigitsInput || customerPhone)} className="px-3 py-1 bg-blue-600 text-white rounded">Send OTP</button>
+                    <button
+                      onClick={() => {
+                        setAuthModalOpen(false);
+                        setAuthMsg("");
+                        setOtpDigitsInput("");
+                      }}
+                      className="px-3 py-1 bg-gray-200 rounded"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      onClick={() => sendOtpToPhone(otpDigitsInput || customerPhone)}
+                      className="px-3 py-1 bg-blue-600 text-white rounded"
+                    >
+                      Send OTP
+                    </button>
                   </div>
                 </>
               ) : (
                 <>
                   <div className="text-sm text-gray-600 mb-2">Enter the 6-digit OTP sent to {otpPhone}</div>
-                  <input value={otpCode} onChange={e => setOtpCode(e.target.value.replace(/\D/g,'').slice(0,6))} placeholder="OTP" className="p-2 border rounded w-full mb-3" />
+                  <input
+                    value={otpCode}
+                    onChange={(e) => setOtpCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
+                    placeholder="OTP"
+                    className="p-2 border rounded w-full mb-3"
+                  />
                   <div className="flex justify-between items-center">
                     <div className="text-sm text-gray-600">{authMsg}</div>
                     <div className="flex gap-2">
-                      <button onClick={() => { setOtpSent(false); setOtpCode(""); setAuthMsg(""); }} className="px-3 py-1 bg-gray-200 rounded">Back</button>
-                      <button onClick={verifyOtpAndLogin} className="px-3 py-1 bg-green-600 text-white rounded">Verify & Login</button>
+                      <button
+                        onClick={() => {
+                          setOtpSent(false);
+                          setOtpCode("");
+                          setAuthMsg("");
+                        }}
+                        className="px-3 py-1 bg-gray-200 rounded"
+                      >
+                        Back
+                      </button>
+                      <button onClick={verifyOtpAndLogin} className="px-3 py-1 bg-green-600 text-white rounded">
+                        Verify & Login
+                      </button>
                     </div>
                   </div>
                 </>
@@ -486,7 +594,7 @@ export default function ShopManager() {
             <div className="bg-white p-4 rounded w-[480px]">
               <h3 className="font-semibold mb-2">Delivery Address (required)</h3>
               <div className="mb-2 text-sm text-gray-600">Please enter the full delivery address before placing the order.</div>
-              <textarea value={customerAddress} onChange={e => setCustomerAddress(e.target.value)} className="w-full p-2 border rounded h-28" />
+              <textarea value={customerAddress} onChange={(e) => setCustomerAddress(e.target.value)} className="w-full p-2 border rounded h-28" />
               <div className="mt-3 flex justify-end gap-2">
                 <button onClick={() => { setAddressModalOpen(false); setAddressMsg(""); }} className="px-3 py-1 bg-gray-200 rounded">Cancel</button>
                 <button onClick={saveAddressAndClose} className="px-3 py-1 bg-blue-600 text-white rounded">Save Address</button>
@@ -500,11 +608,17 @@ export default function ShopManager() {
           <div className="col-span-1">
             <h3 className="font-medium mb-2">Available Shops</h3>
 
-            {loading ? <div>Loading...</div> : shops.length === 0 ? <div>No shops</div> :
-              shops.map(s => (
+            {loading ? (
+              <div>Loading...</div>
+            ) : shops.length === 0 ? (
+              <div>No shops</div>
+            ) : (
+              shops.map((s) => (
                 <div
                   key={s._id}
-                  className={`p-3 mb-3 border rounded cursor-pointer ${selectedShop && selectedShop._id === s._id ? "bg-blue-50" : ""}`}
+                  className={`p-3 mb-3 border rounded cursor-pointer ${
+                    selectedShop && selectedShop._id === s._id ? "bg-blue-50" : ""
+                  }`}
                   onClick={() => setSelectedShop(s)}
                 >
                   <div className="font-medium">{s.name}</div>
@@ -512,7 +626,7 @@ export default function ShopManager() {
                   {s.description ? <div className="text-xs text-gray-400">{s.description}</div> : null}
                 </div>
               ))
-            }
+            )}
           </div>
 
           <div className="col-span-2">
@@ -524,7 +638,7 @@ export default function ShopManager() {
               <div>No items</div>
             ) : (
               <div className="space-y-3">
-                {menu.map(item => (
+                {menu.map((item) => (
                   <div key={item._id} className="p-3 border rounded flex justify-between items-center">
                     <div>
                       <div className="font-medium">{item.name} • ₹{item.price}</div>
@@ -547,10 +661,7 @@ export default function ShopManager() {
               </div>
 
               <div>
-                <button
-                  onClick={() => placeOrder(setInlinePhoneError)}
-                  className="px-4 py-2 bg-green-600 text-white rounded"
-                >
+                <button onClick={() => placeOrder(setInlinePhoneError)} className="px-4 py-2 bg-green-600 text-white rounded">
                   Place Order
                 </button>
               </div>
@@ -561,4 +672,9 @@ export default function ShopManager() {
       </div>
     </div>
   );
+
+  // helper functions used above (placed here to avoid hoisting surprises)
+  function getQty(itemId) {
+    return Number(cart[itemId] || 0);
+  }
 }
