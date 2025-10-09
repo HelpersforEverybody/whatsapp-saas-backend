@@ -292,21 +292,30 @@ export default function ShopManager() {
   }
 
   function openAddAddressModal(editIndex = null) {
-    setAddressEditIndex(editIndex);
-    if (typeof editIndex === "number") {
-      setAddressForm({ ...addresses[editIndex] });
-    } else {
-      setAddressForm({
-        name: customerName || "",
-        phone: customerPhone || "",
-        address: "",
-        pincode: selectedShop?.pincode || "",
-        label: "Home"
-      });
-    }
-    setAddressMsg("");
-    setAddressModalOpen(true);
+  if (typeof editIndex === "number") {
+    const existing = addresses[editIndex] || {};
+    // strip +91 when populating phone input
+    const rawPhone = String(existing.phone || "");
+    const digits = rawPhone.replace(/\D/g, "").slice(-10);
+    setAddressForm({
+      name: existing.name || "",
+      phone: digits,
+      address: existing.address || "",
+      pincode: existing.pincode || (selectedShop ? selectedShop.pincode : ""),
+      // keep any other fields if needed
+    });
+  } else {
+    setAddressForm({
+      name: customerName || "",
+      phone: (customerPhone || "").replace(/\D/g, "").slice(-10),
+      address: "",
+      pincode: selectedShop?.pincode || ""
+    });
   }
+  setAddressMsg("");
+  setAddressModalOpen(true);
+}
+
 
   // add or update (server if logged-in)
   async function addOrUpdateAddress(editIndex = null) {
@@ -659,8 +668,8 @@ export default function ShopManager() {
 
       {/* Address modal */}
       {addressModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-          <div className="bg-white p-4 rounded w-[480px]">
+        <div className="fixed inset-0 z-10001 flex items-center justify-center bg-black/40">
+          <div className="bg-white p-4 rounded w-[480px]" z-10002>
             <h3 className="font-semibold mb-2">{typeof addressEditIndex === "number" ? "Edit Address" : "Add Address"}</h3>
             <div className="grid grid-cols-1 gap-2">
               <input value={addressForm.name} onChange={e => setAddressForm(f => ({ ...f, name: e.target.value }))} placeholder="Name" className="p-2 border rounded" />
