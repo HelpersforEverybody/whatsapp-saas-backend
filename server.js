@@ -48,6 +48,7 @@ mongoose
   .catch((err) => console.error('❌ MongoDB connection error:', err));
 
 /* Models */
+
 // User (merchant)
 const userSchema = new mongoose.Schema({
   name: { type: String, required: true },
@@ -60,20 +61,21 @@ userSchema.methods.verifyPassword = function (plain) {
 };
 const User = mongoose.models.User || mongoose.model('User', userSchema);
 
-// Customer (new)
+// Customer model (end users) with addresses subdocument
 const customerAddressSchema = new mongoose.Schema({
-  label: { type: String, default: '' }, // Home/Work/Other
+  label: { type: String, default: '' }, // e.g. Home/Work
   address: { type: String, required: true },
-  phone: { type: String, default: '' }, // optional phone for this address
+  phone: { type: String, default: '' }, // optional phone for this address (E.164-ish)
   pincode: { type: String, required: true },
   createdAt: { type: Date, default: Date.now },
 });
 const customerSchema = new mongoose.Schema({
   name: { type: String, default: 'Customer' },
-  phone: { type: String, required: true, unique: true }, // normalized +91xxxx...
+  phone: { type: String, required: true, unique: true }, // normalized, e.g. +91XXXXXXXXXX
   addresses: [customerAddressSchema],
   createdAt: { type: Date, default: Date.now },
 });
+customerSchema.index({ phone: 1 });
 const Customer = mongoose.models.Customer || mongoose.model('Customer', customerSchema);
 
 // Shop - includes address, online, pincode required
@@ -102,14 +104,14 @@ const menuItemSchema = new mongoose.Schema({
 });
 const MenuItem = mongoose.models.MenuItem || mongoose.model('MenuItem', menuItemSchema);
 
-// Order (extended: store customer reference optional)
+// Order (store optional customer ref and snapshot address)
 const orderSchema = new mongoose.Schema({
   shop: { type: mongoose.Schema.Types.ObjectId, ref: 'Shop' },
   orderNumber: { type: Number, default: null },
-  customer: { type: mongoose.Schema.Types.ObjectId, ref: 'Customer', default: null }, // new
+  customer: { type: mongoose.Schema.Types.ObjectId, ref: 'Customer', default: null },
   customerName: { type: String, required: true },
   phone: { type: String, required: true },
-  address: { // optional address snapshot
+  address: {
     label: String,
     address: String,
     phone: String,
@@ -222,6 +224,7 @@ const requireCustomer = (req, res, next) => {
 };
 
 /* Auth endpoints */
+
 // Admin login
 app.post('/auth/login', (req, res) => {
   try {
@@ -237,7 +240,7 @@ app.post('/auth/login', (req, res) => {
   }
 });
 
-// Merchant signup (create shop required now)
+// Merchant signup (create shop required)
 app.post('/auth/signup', async (req, res) => {
   try {
     const { name, email, password, createShop } = req.body || {};
@@ -287,67 +290,102 @@ app.post('/auth/merchant-login', async (req, res) => {
     console.error('Merchant login error', e);
     return res.status(500).json({ error: 'server error' });
   }
+}
+
+/* Customer signup & OTP flow */
+
+// Helper: normalize incoming phone to a consistent string (E.164-like).
+function normalizePhoneInput(phone) {
+  if (!phone) return null;
+  const digits = String(phone).replace(/\D/g, '');
+  if (digits.length === 10) return `+91${digits}`;
+  if (digits.length === 11 && digits.startsWith('0')) return `+91${digits.slice(1)}`;
+  if (digits.length === 12 && digits.startsWith('91')) return `+${digits}`;
+  if (String(phone || "").trim().startsWith('+') && digits.length >= 7) return `+${digits}`;
+  return null;
+}
+
+// Customer signup (name + phone required)
+// Creates a customer record - phone must be 10-digit local or with +91 prefix
+app.post('/auth/customer-signup', async (req, res) => {
+  try {
+    const { name, phone } = req.body || {};
+    if (!name || !phone) return res.status(400).json({ error: 'name and phone required' });
+
+    const normalized = normalizePhoneInput(phone);
+    if (!normalized) return res.status(400).json({ error: 'invalid phone format; provide 10 digit local phone or full international number' });
+
+    // check existing
+    const exists = await Customer.findOne({ phone: normalized });
+    if (exists) return res.status(409).json({ error: 'phone already registered, please login' });
+
+    const cust = await Customer.create({ name: name.trim(), phone: normalized });
+    return res.status(201).json({ ok: true, customerId: cust._id, phone: normalized, name: cust.name });
+  } catch (err) {
+    console.error('Customer signup error:', err);
+    return res.status(500).json({ error: 'server error' });
+  }
 });
 
-/* Fake OTP login (test only)
-   Now: create or return persistent Customer doc and return customer-id in JWT.
-*/
+/* Fake OTP storage for demo — in production use a DB or Redis with TTL */
 const otpStore = new Map();
 function genOtp() {
   return Math.floor(100000 + Math.random() * 900000).toString();
 }
+
+// send-otp: generate OTP for normalized phone (no token issued here)
 app.post('/auth/send-otp', async (req, res) => {
   try {
     const { phone } = req.body || {};
     if (!phone) return res.status(400).json({ error: 'phone required' });
-    const normalized = String(phone).replace(/[^\d+]/g, '');
-    if (!/^\+?\d{10,15}$/.test(normalized)) return res.status(400).json({ error: 'invalid phone format' });
+
+    const normalized = normalizePhoneInput(phone);
+    if (!normalized) return res.status(400).json({ error: 'invalid phone format' });
+
     const otp = genOtp();
     const expiresAt = Date.now() + 5 * 60 * 1000;
     otpStore.set(normalized, { otp, expiresAt });
     console.log(`[OTP] send-otp to ${normalized}: ${otp} (expires in 5m)`);
+
+    // optionally send via Twilio (non-blocking)
+    if (twClient && TWILIO_FROM) {
+      sendWhatsAppMessageSafe(normalized, `Your OTP: ${otp}`);
+    }
+
     return res.json({ ok: true, message: 'OTP generated and (pretend) sent' });
   } catch (e) {
     console.error('send-otp error', e);
     return res.status(500).json({ error: 'server error' });
   }
 });
+
+// verify-otp: only issues token if phone belongs to an existing Customer (no auto-create)
 app.post('/auth/verify-otp', async (req, res) => {
   try {
     const { phone, otp } = req.body || {};
     if (!phone || !otp) return res.status(400).json({ error: 'phone and otp required' });
-    const normalized = String(phone).replace(/[^\d+]/g, '');
+
+    const normalized = normalizePhoneInput(phone);
+    if (!normalized) return res.status(400).json({ error: 'invalid phone format' });
+
     const rec = otpStore.get(normalized);
     if (!rec) return res.status(400).json({ error: 'no otp found (request send-otp first)' });
-    if (Date.now() > rec.expiresAt) {
-      otpStore.delete(normalized);
-      return res.status(400).json({ error: 'otp expired' });
-    }
+    if (Date.now() > rec.expiresAt) { otpStore.delete(normalized); return res.status(400).json({ error: 'otp expired' }); }
     if (String(otp).trim() !== String(rec.otp)) return res.status(401).json({ error: 'invalid otp' });
-    otpStore.delete(normalized);
 
-    // Normalize phone to E.164-like with + if digits present
-    const digits = normalized.replace(/\D/g, '');
-    let normalizedPhone = normalized;
-    if (!normalized.startsWith('+') && digits.length === 10) {
-      normalizedPhone = `+91${digits}`;
-    } else if (!normalized.startsWith('+')) {
-      normalizedPhone = `+${digits}`;
-    }
-
-    // Find or create Customer
-    let customer = await Customer.findOne({ phone: normalizedPhone }).lean();
+    // OTP OK — check Customer exists
+    const customer = await Customer.findOne({ phone: normalized });
     if (!customer) {
-      // create lightweight customer with phone; name left empty for user to edit later
-      const created = await Customer.create({ phone: normalizedPhone, name: 'Customer' });
-      customer = created.toObject();
+      // require explicit signup first
+      return res.status(401).json({ error: 'phone not registered. Please sign up first via /auth/customer-signup' });
     }
 
+    // success: issue JWT token for customer
+    otpStore.delete(normalized);
     if (!JWT_SECRET) return res.status(500).json({ error: 'server misconfigured: JWT_SECRET missing' });
-    // token contains customer id for server-side authorization
-    const token = jwt.sign({ role: 'customer', userId: String(customer._id) }, JWT_SECRET, { expiresIn: '7d' });
+    const token = jwt.sign({ role: 'customer', userId: String(customer._id), phone: normalized }, JWT_SECRET, { expiresIn: '7d' });
 
-    return res.json({ token, userId: customer._id, phone: normalizedPhone, name: customer.name || 'Customer' });
+    return res.json({ token, userId: customer._id, phone: normalized, name: customer.name || '' });
   } catch (e) {
     console.error('verify-otp error', e);
     return res.status(500).json({ error: 'server error' });
@@ -355,6 +393,7 @@ app.post('/auth/verify-otp', async (req, res) => {
 });
 
 /* API routes */
+
 // Health
 app.get('/status', (req, res) => res.json({ status: 'ok', time: new Date() }));
 
@@ -413,6 +452,7 @@ app.put('/api/shops/:shopId/status', requireOwner, async (req, res) => {
     res.status(500).json({ error: 'failed to toggle status' });
   }
 });
+
 // Edit shop details (owner only)
 app.patch('/api/shops/:shopId', requireOwner, async (req, res) => {
   try {
@@ -492,26 +532,18 @@ app.post('/api/orders', async (req, res) => {
     const { shop: shopId, customerName, phone: rawPhone, items = [], address } = req.body;
     if (!customerName || !rawPhone) return res.status(400).json({ error: 'customerName and phone required' });
 
-    // Normalize phone
-    const digits = String(rawPhone || "").replace(/\D/g, "");
-    let normalizedPhone = null;
-    if (digits.length === 10) normalizedPhone = `+91${digits}`;
-    else if (digits.length === 11 && digits.startsWith('0')) normalizedPhone = `+91${digits.slice(1)}`;
-    else if (digits.length === 12 && digits.startsWith('91')) normalizedPhone = `+${digits}`;
-    else if (String(rawPhone || "").trim().startsWith('+') && digits.length >= 7) normalizedPhone = `+${digits}`;
-    else return res.status(400).json({ error: 'invalid phone format; provide 10 digit local phone or full international number' });
+    // Normalize phone (same helper)
+    const normalizedPhone = normalizePhoneInput(rawPhone);
+    if (!normalizedPhone) return res.status(400).json({ error: 'invalid phone format; provide 10 digit local phone or full international number' });
 
     // compute total
     const total = items.reduce((s, it) => s + Number(it.price || 0) * Number(it.qty || 0), 0);
 
-    // If shopId provided, validate shop exists & pincode match if address present
+    // If shopId provided, validate shop exists & check pincode match if address present
     let shop = null;
     if (shopId) {
       shop = await Shop.findById(shopId).lean();
-      if (!shop) {
-        // still allow order without shop (guest), but if shopId invalid, respond error
-        return res.status(400).json({ error: 'invalid shop id' });
-      }
+      if (!shop) return res.status(400).json({ error: 'invalid shop id' });
       if (address && address.pincode && String(address.pincode).trim() !== String(shop.pincode).trim()) {
         return res.status(400).json({ error: `Shop does not deliver to pincode ${address.pincode}. Shop pincode is ${shop.pincode}` });
       }
@@ -528,11 +560,10 @@ app.post('/api/orders', async (req, res) => {
         }
       }
     } catch (e) {
-      // ignore invalid token; treat as guest
       customerId = null;
     }
 
-    // If shopId provided, generate per-shop numeric orderNumber atomically
+    // Generate per-shop numeric orderNumber if shop present
     let orderNumber = null;
     if (shopId) {
       const seq = await Shop.findByIdAndUpdate(shopId, { $inc: { lastOrderNumber: 1 } }, { new: true });
@@ -561,7 +592,7 @@ app.post('/api/orders', async (req, res) => {
     // notify customer via Twilio (non-blocking)
     sendWhatsAppMessageSafe(normalizedPhone, `Hi ${customerName}, we received your order ${order.orderNumber ? `#${String(order.orderNumber).padStart(6,'0')}` : order._id}. Total: ₹${total}`).catch(() => {});
 
-    // emit socket (use order._id)
+    // emit socket update
     try {
       emitOrderUpdate(order._id.toString(), {
         orderId: order._id.toString(),
@@ -654,11 +685,9 @@ app.patch('/api/customers/me', requireCustomer, async (req, res) => {
     const update = {};
     if (typeof req.body.name !== 'undefined') update.name = req.body.name;
     if (typeof req.body.phone !== 'undefined') {
-      // normalize phone
-      const digits = String(req.body.phone).replace(/\D/g, '');
-      if (digits.length === 10) update.phone = `+91${digits}`;
-      else if (digits.length >= 7) update.phone = `+${digits}`;
-      else return res.status(400).json({ error: 'invalid phone' });
+      const normalized = normalizePhoneInput(req.body.phone);
+      if (!normalized) return res.status(400).json({ error: 'invalid phone' });
+      update.phone = normalized;
     }
     if (Object.keys(update).length === 0) return res.status(400).json({ error: 'nothing to update' });
     const cust = await Customer.findByIdAndUpdate(req.customerId, update, { new: true }).lean();
@@ -686,6 +715,7 @@ app.get('/api/customers/addresses', requireCustomer, async (req, res) => {
 app.post('/api/customers/addresses', requireCustomer, async (req, res) => {
   try {
     const { label, address, phone, pincode } = req.body || {};
+    if (!address || !pincode || !req.body.name) { /* name not required here; UI will handle */ }
     if (!address || !pincode) return res.status(400).json({ error: 'address and pincode required' });
     // normalize phone if provided
     let phoneNorm = '';
@@ -696,6 +726,7 @@ app.post('/api/customers/addresses', requireCustomer, async (req, res) => {
     const addr = { label: label || '', address, phone: phoneNorm, pincode: String(pincode).trim() };
     const cust = await Customer.findById(req.customerId);
     if (!cust) return res.status(404).json({ error: 'not found' });
+    // default-first-address behavior (frontend will manage default flag). For safety, ensure at least one address exists.
     cust.addresses.push(addr);
     await cust.save();
     res.status(201).json(cust.addresses[cust.addresses.length - 1]);
