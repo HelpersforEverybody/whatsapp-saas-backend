@@ -712,7 +712,7 @@ export default function ShopManager() {
             {addressMsg && <div className="mt-3 text-sm text-red-600">{addressMsg}</div>}
           </div>
         </div>,
-        document.body
+        document.getElementById('cart-address-portal') || document.body
       )}
     </div>
   );
