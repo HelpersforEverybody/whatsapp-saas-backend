@@ -1,16 +1,19 @@
 // frontend/src/components/Cart.jsx
-import React, { useEffect, useState } from "react";
+import React, { useMemo, useState, useEffect } from "react";
 
 /**
- * Props:
- * - items: array of { _id, name, qty, price }
- * - totalQty, totalPrice
- * - addresses: array of { label, address, phone, pincode } (or objects with _id if server)
- * - onAddAddress(): opens parent Add Address UI
- * - onEditAddress(idx): edits address at index (parent should open edit modal)
- * - onDeleteAddress(idx): deletes address at index
- * - onClose(): close cart modal
- * - onConfirm(addressIdx): confirm order with selected address index (returns promise or result)
+ * Props expected:
+ *  - items: [{ _id, name, qty, price }]
+ *  - totalQty
+ *  - totalPrice
+ *  - addresses: array of { label, address, phone, pincode, default?: boolean, _id? }
+ *  - onAddAddress() -> opens address modal (for add)
+ *  - onEditAddress(idx) -> open edit modal for address idx
+ *  - onDeleteAddress(idx) -> delete address
+ *  - onClose()
+ *  - onConfirm(addressIdx) -> place order with selected address
+ *
+ * This component intentionally does not manage persistence; it just calls callbacks.
  */
 export default function Cart({
   items = [],
@@ -21,189 +24,125 @@ export default function Cart({
   onEditAddress = () => {},
   onDeleteAddress = () => {},
   onClose = () => {},
-  onConfirm = async () => ({ ok: false, message: "not implemented" }),
+  onConfirm = () => {},
 }) {
-  // selected index among addresses (null if none)
-  const [selectedIdx, setSelectedIdx] = useState(
-    addresses && addresses.length ? 0 : null
-  );
-  const [pickerOpen, setPickerOpen] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState("");
+  const [selectedIdx, setSelectedIdx] = useState(() => {
+    // prefer default address
+    const def = addresses.findIndex(a => a.default || a.isDefault);
+    return def >= 0 ? def : (addresses.length ? 0 : -1);
+  });
 
-  // keep selected idx valid when addresses list changes
+  // keep selectedIdx synced when addresses change
   useEffect(() => {
     if (!addresses || addresses.length === 0) {
-      setSelectedIdx(null);
+      setSelectedIdx(-1);
       return;
     }
-    // try to keep same index if possible, otherwise clamp to 0
-    if (selectedIdx === null || selectedIdx >= addresses.length) {
-      setSelectedIdx(0);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [addresses]);
+    // if selected index still valid, keep it
+    if (selectedIdx >= 0 && selectedIdx < addresses.length) return;
+    // try to select default
+    const def = addresses.findIndex(a => a.default || a.isDefault);
+    if (def >= 0) setSelectedIdx(def);
+    else setSelectedIdx(0);
+  }, [addresses, selectedIdx]);
 
-  async function confirmOrder() {
-    setErr("");
-    if (!addresses || addresses.length === 0) {
-      setErr("Please add a delivery address first.");
-      return;
-    }
-    if (selectedIdx === null || typeof selectedIdx === "undefined") {
-      setErr("Please select a delivery address.");
-      return;
-    }
-
-    setBusy(true);
-    try {
-      const result = await onConfirm(selectedIdx);
-      if (!result || !result.ok) {
-        setErr(result && result.message ? result.message : "Order failed");
-      } else {
-        // success - parent may close modal
-      }
-    } catch (e) {
-      setErr(e && e.message ? e.message : String(e));
-    } finally {
-      setBusy(false);
-    }
-  }
+  const canPlace = items.length > 0 && selectedIdx >= 0;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-      <div className="bg-white rounded shadow-lg w-full max-w-2xl">
-        <div className="p-4 border-b flex items-start justify-between">
-          <h3 className="text-lg font-semibold">Cart — {items.length} items</h3>
-          <div className="flex gap-2">
-            <button onClick={onClose} className="px-3 py-1 bg-gray-100 rounded border">Close</button>
-          </div>
+    <div className="fixed inset-0 z-[9999] flex items-center justify-center">
+      {/* backdrop */}
+      <div className="absolute inset-0 bg-black/40" onClick={onClose} />
+      <div className="relative bg-white rounded-lg w-[90%] max-w-2xl p-4 shadow-lg z-[10000]">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-lg font-semibold">Cart — {items.length} {items.length === 1 ? "item" : "items"}</h3>
+          <button className="px-3 py-1 bg-gray-100 rounded" onClick={onClose}>Close</button>
         </div>
 
-        <div className="p-4 max-h-[60vh] overflow-auto">
-          {/* Items */}
-          <div className="space-y-3">
-            {items.length === 0 ? (
-              <div className="text-sm text-gray-500">Cart is empty</div>
-            ) : (
-              items.map(it => (
-                <div key={it._id} className="p-3 border rounded flex justify-between items-center bg-white">
-                  <div>
-                    <div className="font-medium">{it.name}</div>
-                    <div className="text-xs text-gray-500">Qty: {it.qty} × ₹{it.price}</div>
-                  </div>
-                  <div className="font-medium">₹{it.qty * it.price}</div>
-                </div>
-              ))
-            )}
-          </div>
-
-          <div className="mt-4">
-            <div className="flex justify-between items-center">
-              <div className="text-sm text-gray-600">Total:</div>
-              <div className="text-xl font-semibold">₹{totalPrice}</div>
-            </div>
-          </div>
-
-          {/* Delivery address */}
-          <div className="mt-6">
-            <div className="flex items-center justify-between mb-2">
-              <h4 className="font-medium">Delivery Address</h4>
-              {/* Replace Add/Edit with single Change Address */}
+        {/* items */}
+        <div className="space-y-3 mb-4">
+          {items.length === 0 ? (
+            <div className="text-sm text-gray-600">Cart is empty</div>
+          ) : items.map(it => (
+            <div key={it._id} className="p-3 border rounded bg-white flex justify-between items-center">
               <div>
-                <button
-                  onClick={() => {
-                    // toggle inline picker
-                    setPickerOpen(v => !v);
-                  }}
-                  className="px-3 py-1 bg-gray-100 rounded border"
-                >
-                  {pickerOpen ? "Close" : "Change Address"}
-                </button>
+                <div className="font-medium">{it.name}</div>
+                <div className="text-sm text-gray-600">Qty: {it.qty} × ₹{it.price}</div>
               </div>
+              <div className="text-sm font-semibold">₹{it.qty * it.price}</div>
             </div>
-
-            {/* Show single selected address when picker closed */}
-            {!pickerOpen && (
-              <div className="p-3 border rounded bg-gray-50">
-                {selectedIdx === null ? (
-                  <div className="text-sm text-gray-600">No address selected</div>
-                ) : (
-                  <>
-                    <div className="flex justify-between">
-                      <div>
-                        <div className="font-medium">{addresses[selectedIdx].label || "Home"}</div>
-                        <div className="text-sm">{addresses[selectedIdx].address}</div>
-                        <div className="text-xs text-gray-500 mt-2">
-                          {addresses[selectedIdx].phone ? addresses[selectedIdx].phone + " • " : ""}{addresses[selectedIdx].pincode || ""}
-                        </div>
-                      </div>
-                      <div className="ml-4 text-sm text-gray-600"> </div>
-                    </div>
-                  </>
-                )}
-              </div>
-            )}
-
-            {/* Inline picker */}
-            {pickerOpen && (
-              <div className="mt-3 space-y-3">
-                {/* Add button */}
-                <div className="flex justify-end">
-                  <button onClick={() => onAddAddress()} className="px-3 py-1 bg-blue-600 text-white rounded">+ Add New</button>
-                </div>
-
-                {/* Addresses list */}
-                {(!addresses || addresses.length === 0) ? (
-                  <div className="p-3 border rounded text-sm text-gray-600">No addresses saved</div>
-                ) : (
-                  addresses.map((addr, idx) => (
-                    <div key={idx} className={`p-3 border rounded ${selectedIdx === idx ? "bg-blue-50" : "bg-white"}`}>
-                      <div className="flex items-start justify-between gap-4">
-                        <div className="flex items-start gap-3">
-                          <div>
-                            <input
-                              type="radio"
-                              name="cart_addr"
-                              checked={selectedIdx === idx}
-                              onChange={() => setSelectedIdx(idx)}
-                              className="mt-1"
-                            />
-                          </div>
-
-                          <div>
-                            <div className="flex items-center gap-2">
-                              <div className="font-medium">{addr.label || "Home"}</div>
-                              {idx === 0 && <div className="text-xs text-blue-600">Default</div>}
-                            </div>
-                            <div className="text-sm">{addr.address}</div>
-                            <div className="text-xs text-gray-500 mt-2">
-                              {addr.phone ? addr.phone + " • " : ""}{addr.pincode || ""}
-                            </div>
-                          </div>
-                        </div>
-
-                        <div className="flex flex-col items-end gap-2">
-                          <div>
-                            <button onClick={() => onEditAddress(idx)} className="px-2 py-1 bg-gray-100 rounded border mr-2">Edit</button>
-                            <button onClick={() => onDeleteAddress(idx)} className="px-2 py-1 bg-red-50 text-red-600 rounded border">Delete</button>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  ))
-                )}
-              </div>
-            )}
-
-            {err && <div className="text-sm text-red-600 mt-3">{err}</div>}
-          </div>
+          ))}
         </div>
 
-        <div className="p-4 border-t flex items-center justify-end gap-3">
-          <button onClick={onClose} className="px-4 py-2 bg-gray-100 rounded">Cancel</button>
-          <button onClick={confirmOrder} disabled={busy} className="px-4 py-2 bg-green-600 text-white rounded">
-            {busy ? "Placing..." : "Place Order"}
+        <div className="flex justify-between items-center mb-4">
+          <div className="text-sm text-gray-600">Total:</div>
+          <div className="text-xl font-semibold">₹{totalPrice}</div>
+        </div>
+
+        {/* Delivery address area */}
+        <div>
+          <div className="flex items-center justify-between mb-3">
+            <h4 className="font-medium">Delivery Address</h4>
+            <div className="flex gap-2">
+              {/* Change/Add button; keep semantics: allow user to open address manager */}
+              <button onClick={onAddAddress} className="px-3 py-1 bg-blue-600 text-white rounded">Change / Add</button>
+            </div>
+          </div>
+
+          {(!addresses || addresses.length === 0) ? (
+            <div className="text-sm text-gray-600 p-3 border rounded">No addresses saved</div>
+          ) : (
+            <div className="space-y-3 max-h-64 overflow-auto pr-2">
+              {addresses.map((a, idx) => {
+                // display phone: if already includes +91 and you want to prefix +91 in UI,
+                // avoid duplicate. We'll display normalized: show +91 only once.
+                const raw = String(a.phone || "");
+                const digits = raw.replace(/\D/g, "");
+                const phoneForUI = digits.length === 10 ? `+91${digits}` : (raw.startsWith('+') ? raw : `+${digits}`);
+
+                return (
+                  <div key={idx} className={`p-3 border rounded ${selectedIdx === idx ? "bg-blue-50" : "bg-white"}`}>
+                    <div className="flex items-start justify-between">
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <input type="radio" checked={selectedIdx === idx} onChange={() => setSelectedIdx(idx)} />
+                          <div>
+                            <div className="font-medium">{a.label || "Home" } {a.default || a.isDefault ? <span className="text-xs text-blue-600 ml-2">Default</span> : null}</div>
+                            <div className="text-sm text-gray-700">{a.address}</div>
+                            <div className="text-xs text-gray-500 mt-1">{a.pincode ? a.pincode : ""} • {phoneForUI}</div>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="flex flex-col items-end gap-2">
+                        {/* Edit */}
+                        <button onClick={() => onEditAddress(idx)} className="px-2 py-1 border rounded text-sm">Edit</button>
+                        {/* Delete (disabled if default) */}
+                        <button
+                          onClick={() => onDeleteAddress(idx)}
+                          className={`px-2 py-1 rounded text-sm ${ (a.default || a.isDefault) ? "bg-gray-100 text-gray-400 cursor-not-allowed" : "bg-red-100 text-red-700"}`}
+                          disabled={!!(a.default || a.isDefault)}
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+        </div>
+
+        {/* actions */}
+        <div className="mt-4 flex justify-end gap-3">
+          <button onClick={onClose} className="px-4 py-2 bg-gray-200 rounded">Cancel</button>
+          <button
+            onClick={() => onConfirm(selectedIdx)}
+            disabled={!canPlace}
+            className={`px-4 py-2 rounded ${canPlace ? "bg-green-600 text-white" : "bg-gray-200 text-gray-400 cursor-not-allowed"}`}
+          >
+            Place Order
           </button>
         </div>
       </div>
