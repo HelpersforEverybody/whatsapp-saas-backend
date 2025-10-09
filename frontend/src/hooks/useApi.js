@@ -5,21 +5,33 @@ export function getApiBase() {
   return API_BASE;
 }
 
+// Merchant token helpers
 export function getMerchantToken() {
   return localStorage.getItem("merchant_token") || "";
 }
 
+// Customer token helpers
+export function getCustomerToken() {
+  return localStorage.getItem("customer_token") || "";
+}
+
+// Generic fetch that attaches merchant OR customer auth automatically
 export async function apiFetch(path, opts = {}) {
   opts = { ...opts };
   opts.headers = opts.headers || {};
-  // set JSON header if body present and content-type not set
+
   if (opts.body && !opts.headers["Content-Type"]) {
     opts.headers["Content-Type"] = "application/json";
   }
-  const token = getMerchantToken();
+
+  // attach either merchant or customer token automatically
+  const merchantToken = getMerchantToken();
+  const customerToken = getCustomerToken();
+  const token = merchantToken || customerToken;
   if (token) {
     opts.headers["Authorization"] = `Bearer ${token}`;
   }
+
   const res = await fetch(`${API_BASE}${path}`, opts);
   return res;
 }
