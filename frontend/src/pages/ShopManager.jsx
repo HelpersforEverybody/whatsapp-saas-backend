@@ -4,6 +4,7 @@ import { createPortal } from "react-dom";
 import { getApiBase } from "../hooks/useApi";
 import Cart from "../components/Cart";
 import ProfileMenu from "../components/ProfileMenu";
+import { Home, Briefcase, MapPin } from "lucide-react"; // icons used for address labels
 
 const API_BASE = getApiBase();
 const API_KEY = import.meta.env.VITE_API_KEY || "";
@@ -19,18 +20,18 @@ export default function ShopManager() {
   const [pincode, setPincode] = useState("");
   const [pincodeErr, setPincodeErr] = useState("");
 
-  // cart as map itemId -> qty
+  // cart map itemId -> qty
   const [cart, setCart] = useState({});
 
   // auth / customer info
   const [customerToken, setCustomerToken] = useState(localStorage.getItem("customer_token") || "");
   const [customerName, setCustomerName] = useState(localStorage.getItem("customer_name") || "");
-  const [customerPhone, setCustomerPhone] = useState(localStorage.getItem("customer_phone") || ""); // digits only
+  const [customerPhone, setCustomerPhone] = useState(localStorage.getItem("customer_phone") || "");
   const [inlinePhoneError, setInlinePhoneError] = useState("");
 
   // Auth modal / OTP
   const [authModalOpen, setAuthModalOpen] = useState(false);
-  const [authMode, setAuthMode] = useState("login"); // 'login' or 'signup'
+  const [authMode, setAuthMode] = useState("login");
   const [otpSent, setOtpSent] = useState(false);
   const [otpPhone, setOtpPhone] = useState("");
   const [otpDigitsInput, setOtpDigitsInput] = useState("");
@@ -50,10 +51,10 @@ export default function ShopManager() {
   const [addressForm, setAddressForm] = useState({ label: "Home", name: "", phone: "", address: "", pincode: "" });
   const [addressMsg, setAddressMsg] = useState("");
 
-  // cart modal (confirm & choose address)
+  // cart modal
   const [cartModalOpen, setCartModalOpen] = useState(false);
 
-  // load shops at mount
+  // mount
   useEffect(() => {
     loadShops();
     setCustomerToken(localStorage.getItem("customer_token") || "");
@@ -188,13 +189,12 @@ export default function ShopManager() {
     }
   }
 
-  // verify OTP and login (or signup + login)
+  // verify OTP (+ signup flow handled server-side)
   async function verifyOtpAndLogin() {
     setAuthMsg("");
     try {
       if (!otpPhone || !otpCode) { setAuthMsg("Phone and OTP required"); return; }
       const payload = { phone: otpPhone, otp: otpCode };
-      // if signup mode, prefer server-side signup flow (server may require separate endpoint)
       if (authMode === "signup") {
         payload.name = customerName || "";
         payload.signup = true;
@@ -207,18 +207,15 @@ export default function ShopManager() {
       if (!res.ok) {
         const txt = await res.text(); throw new Error(txt || "OTP verify failed");
       }
-      const data = await res.json(); // { token, userId, phone, name }
+      const data = await res.json();
       if (!data.token) throw new Error("No token returned");
-      // save token and canonical customer info
       localStorage.setItem("customer_token", data.token);
       localStorage.setItem("customer_phone", (data.phone || "").replace(/\D/g, "").slice(-10) || otpDigitsInput || "");
       localStorage.setItem("customer_name", (data.name || customerName || "").trim() || "");
       setCustomerToken(data.token);
       setCustomerPhone((data.phone || "").replace(/\D/g, "").slice(-10) || "");
       setCustomerName((data.name || customerName || "").trim() || "");
-      // fetch authoritative addresses
       await fetchCustomerAddresses();
-      // close auth UI
       setAuthModalOpen(false);
       setOtpSent(false);
       setOtpCode("");
@@ -428,7 +425,7 @@ export default function ShopManager() {
   }
 
   // -------------------------
-  // Top-right badge component
+  // Top-right badge
   // -------------------------
   function TopRightBadge() {
     if (customerToken) {
@@ -441,7 +438,7 @@ export default function ShopManager() {
             onLogout={logoutCustomer}
             addresses={addresses}
             onOpenAddressModal={() => openAddAddressModal(null)}
-            onManageAddresses={() => { /* open a full addresses manager if you want */ setCartModalOpen(true); }}
+            onManageAddresses={() => setCartModalOpen(true)}
           />
         </div>
       );
@@ -664,18 +661,25 @@ export default function ShopManager() {
         />
       )}
 
-      {/* Address Add/Edit portal modal (renders above everything) */}
+      {/* Address Add/Edit portal modal: bottom-sheet style like ProfileMenu */}
       {addressModalOpen && createPortal(
-        <div className="fixed inset-0 z-[9999] bg-black/40 flex items-center justify-center p-4">
-          <div className="bg-white rounded-lg shadow-lg w-full max-w-[520px] p-5">
+        <div className="fixed inset-0 z-[9999] bg-black/40 flex items-end justify-center">
+          <div className="bg-white rounded-t-2xl w-full max-w-[520px] p-5 shadow-lg">
             <div className="flex justify-between items-center mb-3">
-              <h3 className="text-lg font-semibold">{typeof addressEditIndex === "number" ? "Edit Address" : "Add Address"}</h3>
+              <h3 className="text-lg font-semibold">{typeof addressEditIndex === "number" ? "Edit Address" : "Add New Address"}</h3>
               <button onClick={() => { setAddressModalOpen(false); setAddressMsg(""); }} className="text-gray-600">✕</button>
             </div>
 
             <div className="flex gap-2 mb-3">
               {["Home","Office","Other"].map(t => (
-                <button key={t} onClick={() => setAddressForm(f => ({ ...f, label: t }))} className={`flex items-center gap-1 px-3 py-1 border rounded-full text-sm ${addressForm.label === t ? "bg-blue-100 border-blue-400" : "border-gray-200"}`}>
+                <button
+                  key={t}
+                  onClick={() => setAddressForm(f => ({ ...f, label: t }))}
+                  className={`flex items-center gap-1 px-3 py-1 border rounded-full text-sm ${addressForm.label === t ? "bg-blue-100 border-blue-400" : "border-gray-200"}`}
+                >
+                  {t === "Home" && <Home size={14} />}
+                  {t === "Office" && <Briefcase size={14} />}
+                  {t === "Other" && <MapPin size={14} />}
                   {t}
                 </button>
               ))}
@@ -702,7 +706,7 @@ export default function ShopManager() {
 
             <div className="mt-4 flex justify-end gap-2">
               <button onClick={() => { setAddressModalOpen(false); setAddressMsg(""); }} className="px-3 py-1 bg-gray-200 rounded">Cancel</button>
-              <button onClick={() => addOrUpdateAddress(addressEditIndex)} className="px-4 py-1 bg-blue-600 text-white rounded">Save</button>
+              <button onClick={() => addOrUpdateAddress(addressEditIndex)} className="px-4 py-1 bg-blue-600 text-white rounded">Save Address</button>
             </div>
 
             {addressMsg && <div className="mt-3 text-sm text-red-600">{addressMsg}</div>}
