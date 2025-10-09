@@ -61,22 +61,27 @@ userSchema.methods.verifyPassword = function (plain) {
 };
 const User = mongoose.models.User || mongoose.model('User', userSchema);
 
-// Customer model (end users) with addresses subdocument
+// Customer address subdoc now has isDefault flag
 const customerAddressSchema = new mongoose.Schema({
-  label: { type: String, default: '' }, // e.g. Home/Work
+  label: { type: String, default: '' }, // Home/Work/Other (optional)
+  name: { type: String, default: '' }, // receiver name for this address
   address: { type: String, required: true },
-  phone: { type: String, default: '' }, // optional phone for this address (E.164-ish)
+  phone: { type: String, default: '' }, // normalized phone for this address
   pincode: { type: String, required: true },
+  isDefault: { type: Boolean, default: false },
   createdAt: { type: Date, default: Date.now },
 });
+
+// Customer model
 const customerSchema = new mongoose.Schema({
   name: { type: String, default: 'Customer' },
-  phone: { type: String, required: true, unique: true }, // normalized, e.g. +91XXXXXXXXXX
+  phone: { type: String, required: true, unique: true }, // normalized +91...
   addresses: [customerAddressSchema],
   createdAt: { type: Date, default: Date.now },
 });
 customerSchema.index({ phone: 1 });
 const Customer = mongoose.models.Customer || mongoose.model('Customer', customerSchema);
+
 
 // Shop - includes address, online, pincode required
 const shopSchema = new mongoose.Schema({
@@ -722,18 +727,30 @@ app.get('/api/customers/addresses', requireCustomer, async (req, res) => {
 // Add address
 app.post('/api/customers/addresses', requireCustomer, async (req, res) => {
   try {
-    const { label, address, phone, pincode } = req.body || {};
-    if (!address || !pincode) return res.status(400).json({ error: 'address and pincode required' });
+    const { label, name, address, phone, pincode } = req.body || {};
+    if (!address || !pincode || !name) return res.status(400).json({ error: 'name, address and pincode required' });
 
+    // normalize phone if provided (store as +91ddddddddd)
     let phoneNorm = '';
     if (phone) {
       const digits = String(phone).replace(/\D/g, '');
       phoneNorm = digits.length === 10 ? `+91${digits}` : (digits.length >= 7 ? `+${digits}` : '');
     }
-    const addr = { label: label || '', address, phone: phoneNorm, pincode: String(pincode).trim() };
+
     const cust = await Customer.findById(req.customerId);
     if (!cust) return res.status(404).json({ error: 'not found' });
+
+    // if no addresses exist, new address becomes default
+    const isDefault = !(cust.addresses && cust.addresses.length > 0);
+
+    const addr = { label: label || '', name: name || '', address, phone: phoneNorm, pincode: String(pincode).trim(), isDefault };
     cust.addresses.push(addr);
+
+    // if this is default, ensure others are not default (sanity)
+    if (isDefault) {
+      cust.addresses.forEach((a, idx) => { if (idx !== cust.addresses.length - 1) a.isDefault = false; });
+    }
+
     await cust.save();
     res.status(201).json(cust.addresses[cust.addresses.length - 1]);
   } catch (e) {
@@ -742,21 +759,33 @@ app.post('/api/customers/addresses', requireCustomer, async (req, res) => {
   }
 });
 
+
 // Edit address
+// Edit address (and allow setting isDefault)
 app.patch('/api/customers/addresses/:addrId', requireCustomer, async (req, res) => {
   try {
-    const { label, address, phone, pincode } = req.body || {};
+    const { label, name, address, phone, pincode, isDefault } = req.body || {};
     const cust = await Customer.findById(req.customerId);
     if (!cust) return res.status(404).json({ error: 'not found' });
     const addr = cust.addresses.id(req.params.addrId);
     if (!addr) return res.status(404).json({ error: 'address not found' });
+
     if (typeof label !== 'undefined') addr.label = label;
+    if (typeof name !== 'undefined') addr.name = name;
     if (typeof address !== 'undefined') addr.address = address;
     if (typeof pincode !== 'undefined') addr.pincode = String(pincode);
     if (typeof phone !== 'undefined') {
       const digits = String(phone).replace(/\D/g, '');
       addr.phone = digits.length === 10 ? `+91${digits}` : (digits.length >= 7 ? `+${digits}` : '');
     }
+
+    // If client requests set default
+    if (typeof isDefault !== 'undefined' && isDefault === true) {
+      // unset other defaults
+      cust.addresses.forEach(a => (a.isDefault = false));
+      addr.isDefault = true;
+    }
+
     await cust.save();
     res.json(addr);
   } catch (e) {
@@ -765,13 +794,32 @@ app.patch('/api/customers/addresses/:addrId', requireCustomer, async (req, res) 
   }
 });
 
+
 // Delete address
+// Delete address (disallow deleting the only/default address unless another default exists)
 app.delete('/api/customers/addresses/:addrId', requireCustomer, async (req, res) => {
   try {
     const cust = await Customer.findById(req.customerId);
     if (!cust) return res.status(404).json({ error: 'not found' });
     const addr = cust.addresses.id(req.params.addrId);
     if (!addr) return res.status(404).json({ error: 'address not found' });
+
+    // If trying to delete default when it's the only or no other default exists -> block
+    if (addr.isDefault) {
+      // Check if there is at least one other address to promote
+      const other = cust.addresses.find(a => String(a._id) !== String(addr._id));
+      if (!other) {
+        return res.status(400).json({ error: "cannot delete default address — add another address and set it default first" });
+      }
+      // If there are others but none marked default, promote the first other
+      const hasOtherDefault = cust.addresses.some(a => String(a._id) !== String(addr._id) && a.isDefault);
+      if (!hasOtherDefault) {
+        // auto-promote the first other
+        const otherAddr = cust.addresses.find(a => String(a._id) !== String(addr._id));
+        otherAddr.isDefault = true;
+      }
+    }
+
     addr.remove();
     await cust.save();
     res.json({ ok: true });
@@ -780,6 +828,7 @@ app.delete('/api/customers/addresses/:addrId', requireCustomer, async (req, res)
     res.status(500).json({ error: 'failed' });
   }
 });
+
 
 // Customer: list own orders
 app.get('/api/customers/orders', requireCustomer, async (req, res) => {
