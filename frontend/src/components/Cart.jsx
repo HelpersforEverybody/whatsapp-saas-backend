@@ -53,6 +53,9 @@ export default function Cart({
       {/* backdrop */}
       <div className="absolute inset-0 bg-black/40" onClick={onClose} />
       <div className="relative bg-white rounded-lg w-[90%] max-w-2xl p-4 shadow-lg z-[10000]">
+        {/* Portal mount point for Add/Edit Address modal */}
+<div id="cart-address-portal" />
+
         <div className="flex items-center justify-between mb-4">
           <h3 className="text-lg font-semibold">Cart — {items.length} {items.length === 1 ? "item" : "items"}</h3>
           <button className="px-3 py-1 bg-gray-100 rounded" onClick={onClose}>Close</button>
