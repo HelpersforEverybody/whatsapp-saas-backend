@@ -160,44 +160,78 @@ export default function ShopManager() {
     setter(digits);
   }
 
-  // -------------------------
-  // Auth (OTP) helpers
-  // -------------------------
-  async function sendOtpToPhone(digits10, nameToKeepIfSignup) {
-    setAuthMsg("");
-    try {
-      const digits = String(digits10 || "").replace(/\D/g, "").slice(-10);
-      if (digits.length !== 10) {
-        setAuthMsg("Enter 10 digits to send OTP");
-        return;
-      }
-      if (authMode === "signup" && (!nameToKeepIfSignup || !String(nameToKeepIfSignup).trim())) {
+// -------------------------
+// Auth (OTP) helpers
+// -------------------------
+async function sendOtpToPhone(digits10, nameToKeepIfSignup) {
+  setAuthMsg("");
+  try {
+    const digits = String(digits10 || "").replace(/\D/g, "").slice(-10);
+    if (digits.length !== 10) {
+      setAuthMsg("Enter 10 digits to send OTP");
+      return;
+    }
+
+    // If signup mode, attempt to create customer first.
+    // If phone already exists, backend returns 409 -> inform user to login.
+    if (authMode === "signup") {
+      if (!nameToKeepIfSignup || !String(nameToKeepIfSignup).trim()) {
         setAuthMsg("Please enter your name to signup");
         return;
       }
-      const normalized = `+91${digits}`;
-      const res = await fetch(`${API_BASE}/auth/send-otp`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ phone: normalized }),
-      });
-      if (!res.ok) {
-        const txt = await res.text();
-        throw new Error(txt || "Failed to send OTP");
+
+      const normalizedForSignup = `+91${digits}`;
+      try {
+        const signupRes = await fetch(`${API_BASE}/auth/customer-signup`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name: nameToKeepIfSignup.trim(), phone: normalizedForSignup }),
+        });
+
+        if (signupRes.status === 409) {
+          // Already registered — ask to login instead of sending OTP
+          setAuthMsg("You are already registered. Please login.");
+          return;
+        }
+
+        if (!signupRes.ok) {
+          const txt = await signupRes.text();
+          throw new Error(txt || "Signup failed");
+        }
+
+        // signup created the customer; continue to send OTP below
+      } catch (err) {
+        console.error("signup check error", err);
+        setAuthMsg("Signup failed: " + (err.message || err));
+        return;
       }
-      setOtpSent(true);
-      setOtpPhone(normalized);
-      setOtpDigitsInput(digits);
-      setAuthMsg("OTP sent — check server logs (demo).");
-      // if signup, keep name in customerName state so verify can store it
-      if (authMode === "signup" && nameToKeepIfSignup) {
-        setCustomerName(nameToKeepIfSignup);
-      }
-    } catch (e) {
-      console.error("sendOtp error", e);
-      setAuthMsg("Error sending OTP: " + (e.message || e));
+    } // end signup pre-check
+
+    // Now send OTP (same for login or successful signup)
+    const normalized = `+91${digits}`;
+    const res = await fetch(`${API_BASE}/auth/send-otp`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ phone: normalized }),
+    });
+    if (!res.ok) {
+      const txt = await res.text();
+      throw new Error(txt || "Failed to send OTP");
     }
+    setOtpSent(true);
+    setOtpPhone(normalized);
+    setOtpDigitsInput(digits);
+    setAuthMsg("OTP sent — check server logs (demo).");
+    // if signup, keep name in customerName state so verify can store it
+    if (authMode === "signup" && nameToKeepIfSignup) {
+      setCustomerName(nameToKeepIfSignup);
+    }
+  } catch (e) {
+    console.error("sendOtp error", e);
+    setAuthMsg("Error sending OTP: " + (e.message || e));
   }
+}
+
 
   // NOTE: use authMode (login/signup). On signup include name + signup:true
   async function verifyOtpAndLogin() {
