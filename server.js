@@ -356,46 +356,48 @@ app.post('/auth/send-otp', async (req, res) => {
   }
 });
 
-// verify-otp: issues token only when OTP ok.
-// If customer doesn't exist, will auto-create WHEN the request includes `name` (or signup=true).
+// replace your existing /auth/verify-otp route with this
 app.post('/auth/verify-otp', async (req, res) => {
   try {
     const { phone, otp, name, signup } = req.body || {};
     if (!phone || !otp) return res.status(400).json({ error: 'phone and otp required' });
 
-    // normalize incoming phone same as normalizePhoneInput helper
-    const normalized = normalizePhoneInput(phone);
-    if (!normalized) return res.status(400).json({ error: 'invalid phone format' });
-
+    const normalized = String(phone).replace(/[^\d+]/g, '');
     const rec = otpStore.get(normalized);
     if (!rec) return res.status(400).json({ error: 'no otp found (request send-otp first)' });
     if (Date.now() > rec.expiresAt) { otpStore.delete(normalized); return res.status(400).json({ error: 'otp expired' }); }
     if (String(otp).trim() !== String(rec.otp)) return res.status(401).json({ error: 'invalid otp' });
 
-    // OTP ok — find customer
-    let customer = await Customer.findOne({ phone: normalized });
+    // Normalise to +91xxx or +<digits> (same logic you already have)
+    const digits = normalized.replace(/\D/g, '');
+    let normalizedPhone = normalized;
+    if (!normalized.startsWith('+') && digits.length === 10) normalizedPhone = `+91${digits}`;
+    else if (!normalized.startsWith('+')) normalizedPhone = `+${digits}`;
+
+    // Find or create Customer
+    let customer = await Customer.findOne({ phone: normalizedPhone });
     if (!customer) {
-      // if client provided name (or signup flag) create customer automatically
       if (signup || (name && String(name).trim().length > 1)) {
         const createName = (name && String(name).trim()) ? String(name).trim() : 'Customer';
-        customer = await Customer.create({ name: createName, phone: normalized });
+        customer = await Customer.create({ name: createName, phone: normalizedPhone });
       } else {
         return res.status(401).json({ error: 'phone not registered. Please sign up first via /auth/customer-signup' });
       }
     }
 
-    // OTP used — remove from store
+    // consume OTP
     otpStore.delete(normalized);
 
     if (!JWT_SECRET) return res.status(500).json({ error: 'server misconfigured: JWT_SECRET missing' });
-    const token = jwt.sign({ role: 'customer', userId: String(customer._id), phone: normalized }, JWT_SECRET, { expiresIn: '7d' });
+    const token = jwt.sign({ role: 'customer', userId: String(customer._id), phone: normalizedPhone }, JWT_SECRET, { expiresIn: '7d' });
 
-    return res.json({ token, userId: customer._id, phone: normalized, name: customer.name || '' });
+    return res.json({ token, userId: customer._id, phone: normalizedPhone, name: customer.name || '' });
   } catch (e) {
     console.error('verify-otp error', e);
     return res.status(500).json({ error: 'server error' });
   }
 });
+
 
 
 /* API routes */
