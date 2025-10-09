@@ -567,19 +567,20 @@ async function verifyOtpAndLogin() {
               </div>
             )}
 
-            {/* Cart summary & open cart */}
-            <div className="mt-4 flex items-center justify-between">
-              <div>
-                <div className="text-sm text-gray-600">Cart: <b>{cartSummary().totalQty}</b> items</div>
-                <div className="text-sm text-gray-800">Total: <b>₹{cartSummary().totalPrice}</b></div>
-              </div>
+            {/* Cart component (right column) */}
+<div className="mt-4">
+  <Cart
+    items={cartItemsArray()}
+    totalQty={totalQty}
+    totalPrice={totalPrice}
+    onIncrement={(id) => increment(id)}
+    onDecrement={(id) => decrement(id)}
+    onRemove={(id) => setQty(id, 0)}
+    onPlaceOrder={() => placeOrder(setInlinePhoneError)}
+    disabled={selectedShop ? !selectedShop.online : true}
+  />
+</div>
 
-              <div>
-                <button onClick={() => setCartModalOpen(true)} className="px-4 py-2 bg-green-600 text-white rounded">
-                  View Cart
-                </button>
-              </div>
-            </div>
 
           </div>
         </div>
