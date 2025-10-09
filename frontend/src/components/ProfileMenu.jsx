@@ -113,7 +113,7 @@ function ManageAddresses({ onClose }) {
   }
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center">
+    <div className="fixed inset-0 z-[9999] bg-black/40 flex items-center justify-center">
       <div className="bg-white rounded-lg shadow-lg w-[500px] max-h-[80vh] overflow-auto p-5 relative">
         <div className="flex justify-between items-center mb-4">
           <h2 className="text-lg font-semibold">Addresses</h2>
@@ -165,7 +165,7 @@ function ManageAddresses({ onClose }) {
                     </div>
                     <div className="text-sm mt-1">{a.address}</div>
                     <div className="text-xs text-gray-600 mt-1">
-                      {a.name} • {a.phone} • {a.pincode}
+                      {a.name} • {normalizePhone(a.phone)} • {a.pincode}
                     </div>
                   </div>
 
@@ -219,9 +219,15 @@ function ManageAddresses({ onClose }) {
 // Add / Edit Address Modal
 // ----------------------
 function AddEditAddressModal({ onClose, editData, onSaved }) {
+  // strip +91 if present in edit data before populating
+  const stripPhone = (p) => String(p || "").replace(/\D/g, "").slice(-10);
+
   const [form, setForm] = useState(
-    editData || { label: "Home", name: "", phone: "", address: "", pincode: "" }
+    editData
+      ? { ...editData, phone: stripPhone(editData.phone) }
+      : { label: "Home", name: "", phone: "", address: "", pincode: "" }
   );
+
   const token = localStorage.getItem("customer_token") || "";
   const isEdit = !!editData;
 
@@ -231,10 +237,14 @@ function AddEditAddressModal({ onClose, editData, onSaved }) {
       return;
     }
 
+    // always store +91 prefixed number (backend expects full)
+    const digits = form.phone.replace(/\D/g, "").slice(-10);
+    const phone = digits ? `+91${digits}` : "";
+
     const body = {
       label: form.label,
       name: form.name,
-      phone: form.phone,
+      phone,
       address: form.address,
       pincode: form.pincode,
     };
@@ -263,8 +273,8 @@ function AddEditAddressModal({ onClose, editData, onSaved }) {
   }
 
   return (
-    <div className="fixed inset-0 z-60 bg-black/40 flex items-end justify-center">
-      <div className="bg-white rounded-t-2xl w-full max-w-[500px] p-5 shadow-lg">
+    <div className="fixed inset-0 z-[10001] bg-black/40 flex items-end justify-center">
+      <div className="bg-white rounded-t-2xl w-full max-w-[500px] p-5 shadow-lg z-[10002]">
         <div className="flex justify-between items-center mb-3">
           <h3 className="text-lg font-semibold">
             {isEdit ? "Edit Address" : "Add New Address"}
@@ -299,10 +309,13 @@ function AddEditAddressModal({ onClose, editData, onSaved }) {
             className="border rounded w-full p-2"
           />
           <input
-            placeholder="Phone (optional)"
+            placeholder="Phone (10 digits)"
             value={form.phone}
             onChange={(e) =>
-              setForm({ ...form, phone: e.target.value.replace(/\D/g, "").slice(0, 10) })
+              setForm({
+                ...form,
+                phone: e.target.value.replace(/\D/g, "").slice(0, 10),
+              })
             }
             className="border rounded w-full p-2"
           />
@@ -316,7 +329,10 @@ function AddEditAddressModal({ onClose, editData, onSaved }) {
             placeholder="Pincode *"
             value={form.pincode}
             onChange={(e) =>
-              setForm({ ...form, pincode: e.target.value.replace(/\D/g, "").slice(0, 6) })
+              setForm({
+                ...form,
+                pincode: e.target.value.replace(/\D/g, "").slice(0, 6),
+              })
             }
             className="border rounded w-full p-2"
           />
@@ -331,4 +347,15 @@ function AddEditAddressModal({ onClose, editData, onSaved }) {
       </div>
     </div>
   );
+}
+
+// ----------------------
+// Helpers
+// ----------------------
+function normalizePhone(p) {
+  if (!p) return "";
+  const digits = String(p).replace(/\D/g, "");
+  if (digits.length === 10) return `+91${digits}`;
+  if (p.startsWith("+")) return p;
+  return p;
 }
