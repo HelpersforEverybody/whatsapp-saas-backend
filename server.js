@@ -60,7 +60,23 @@ userSchema.methods.verifyPassword = function (plain) {
 };
 const User = mongoose.models.User || mongoose.model('User', userSchema);
 
-// Shop - now includes address, online, pincode required
+// Customer (new)
+const customerAddressSchema = new mongoose.Schema({
+  label: { type: String, default: '' }, // Home/Work/Other
+  address: { type: String, required: true },
+  phone: { type: String, default: '' }, // optional phone for this address
+  pincode: { type: String, required: true },
+  createdAt: { type: Date, default: Date.now },
+});
+const customerSchema = new mongoose.Schema({
+  name: { type: String, default: 'Customer' },
+  phone: { type: String, required: true, unique: true }, // normalized +91xxxx...
+  addresses: [customerAddressSchema],
+  createdAt: { type: Date, default: Date.now },
+});
+const Customer = mongoose.models.Customer || mongoose.model('Customer', customerSchema);
+
+// Shop - includes address, online, pincode required
 const shopSchema = new mongoose.Schema({
   name: { type: String, required: true },
   phone: { type: String, required: true, unique: true },
@@ -86,12 +102,19 @@ const menuItemSchema = new mongoose.Schema({
 });
 const MenuItem = mongoose.models.MenuItem || mongoose.model('MenuItem', menuItemSchema);
 
-// Order
+// Order (extended: store customer reference optional)
 const orderSchema = new mongoose.Schema({
   shop: { type: mongoose.Schema.Types.ObjectId, ref: 'Shop' },
   orderNumber: { type: Number, default: null },
+  customer: { type: mongoose.Schema.Types.ObjectId, ref: 'Customer', default: null }, // new
   customerName: { type: String, required: true },
   phone: { type: String, required: true },
+  address: { // optional address snapshot
+    label: String,
+    address: String,
+    phone: String,
+    pincode: String,
+  },
   items: [
     {
       name: String,
@@ -188,6 +211,16 @@ const requireOwner = async (req, res, next) => {
   next();
 };
 
+// requireCustomer - verify JWT with role 'customer'
+const requireCustomer = (req, res, next) => {
+  const authHeader = (req.get('authorization') || '').toString().trim();
+  if (!authHeader) return res.status(401).json({ error: 'unauthorized' });
+  const decoded = verifyJwtToken(authHeader);
+  if (!decoded || decoded.role !== 'customer') return res.status(401).json({ error: 'unauthorized' });
+  req.customerId = decoded.userId;
+  next();
+};
+
 /* Auth endpoints */
 // Admin login
 app.post('/auth/login', (req, res) => {
@@ -218,8 +251,6 @@ app.post('/auth/signup', async (req, res) => {
     // require createShop with required fields
     let shop = null;
     if (!createShop || !createShop.name || !createShop.phone || !createShop.address || !createShop.pincode) {
-      // delete created user to avoid orphan if you prefer — choice: keep user and require merchant to create shop via UI later.
-      // We'll return 400 to indicate shop details required during signup.
       return res.status(400).json({ error: 'createShop with name, phone, address and pincode is required' });
     } else {
       shop = await Shop.create({
@@ -258,7 +289,9 @@ app.post('/auth/merchant-login', async (req, res) => {
   }
 });
 
-/* Fake OTP login (test only) */
+/* Fake OTP login (test only)
+   Now: create or return persistent Customer doc and return customer-id in JWT.
+*/
 const otpStore = new Map();
 function genOtp() {
   return Math.floor(100000 + Math.random() * 900000).toString();
@@ -286,12 +319,35 @@ app.post('/auth/verify-otp', async (req, res) => {
     const normalized = String(phone).replace(/[^\d+]/g, '');
     const rec = otpStore.get(normalized);
     if (!rec) return res.status(400).json({ error: 'no otp found (request send-otp first)' });
-    if (Date.now() > rec.expiresAt) { otpStore.delete(normalized); return res.status(400).json({ error: 'otp expired' }); }
+    if (Date.now() > rec.expiresAt) {
+      otpStore.delete(normalized);
+      return res.status(400).json({ error: 'otp expired' });
+    }
     if (String(otp).trim() !== String(rec.otp)) return res.status(401).json({ error: 'invalid otp' });
     otpStore.delete(normalized);
+
+    // Normalize phone to E.164-like with + if digits present
+    const digits = normalized.replace(/\D/g, '');
+    let normalizedPhone = normalized;
+    if (!normalized.startsWith('+') && digits.length === 10) {
+      normalizedPhone = `+91${digits}`;
+    } else if (!normalized.startsWith('+')) {
+      normalizedPhone = `+${digits}`;
+    }
+
+    // Find or create Customer
+    let customer = await Customer.findOne({ phone: normalizedPhone }).lean();
+    if (!customer) {
+      // create lightweight customer with phone; name left empty for user to edit later
+      const created = await Customer.create({ phone: normalizedPhone, name: 'Customer' });
+      customer = created.toObject();
+    }
+
     if (!JWT_SECRET) return res.status(500).json({ error: 'server misconfigured: JWT_SECRET missing' });
-    const token = jwt.sign({ role: 'customer', userId: normalized }, JWT_SECRET, { expiresIn: '7d' });
-    return res.json({ token, userId: normalized });
+    // token contains customer id for server-side authorization
+    const token = jwt.sign({ role: 'customer', userId: String(customer._id) }, JWT_SECRET, { expiresIn: '7d' });
+
+    return res.json({ token, userId: customer._id, phone: normalizedPhone, name: customer.name || 'Customer' });
   } catch (e) {
     console.error('verify-otp error', e);
     return res.status(500).json({ error: 'server error' });
@@ -314,7 +370,6 @@ app.post('/api/shops', requireOwner, async (req, res) => {
     res.status(500).json({ error: 'failed to create shop', detail: err.message });
   }
 });
-
 
 // Public list: only online shops, optional pincode
 app.get('/api/shops', async (req, res) => {
@@ -427,11 +482,17 @@ app.get('/api/shops/:shopId/menu', async (req, res) => {
   }
 });
 
-// Create order (public)
+/* Create order
+   - Validate phone, normalize
+   - If Authorization contains customer token, attach customerId
+   - Accept address snapshot in body; if shop provided, validate address.pincode === shop.pincode
+*/
 app.post('/api/orders', async (req, res) => {
   try {
-    const { shop: shopId, customerName, phone: rawPhone, items = [] } = req.body;
+    const { shop: shopId, customerName, phone: rawPhone, items = [], address } = req.body;
     if (!customerName || !rawPhone) return res.status(400).json({ error: 'customerName and phone required' });
+
+    // Normalize phone
     const digits = String(rawPhone || "").replace(/\D/g, "");
     let normalizedPhone = null;
     if (digits.length === 10) normalizedPhone = `+91${digits}`;
@@ -440,22 +501,77 @@ app.post('/api/orders', async (req, res) => {
     else if (String(rawPhone || "").trim().startsWith('+') && digits.length >= 7) normalizedPhone = `+${digits}`;
     else return res.status(400).json({ error: 'invalid phone format; provide 10 digit local phone or full international number' });
 
+    // compute total
     const total = items.reduce((s, it) => s + Number(it.price || 0) * Number(it.qty || 0), 0);
 
+    // If shopId provided, validate shop exists & pincode match if address present
+    let shop = null;
+    if (shopId) {
+      shop = await Shop.findById(shopId).lean();
+      if (!shop) {
+        // still allow order without shop (guest), but if shopId invalid, respond error
+        return res.status(400).json({ error: 'invalid shop id' });
+      }
+      if (address && address.pincode && String(address.pincode).trim() !== String(shop.pincode).trim()) {
+        return res.status(400).json({ error: `Shop does not deliver to pincode ${address.pincode}. Shop pincode is ${shop.pincode}` });
+      }
+    }
+
+    // determine customer if token provided
+    let customerId = null;
+    try {
+      const authHeader = (req.get('authorization') || '').toString().trim();
+      if (authHeader) {
+        const decoded = verifyJwtToken(authHeader);
+        if (decoded && decoded.role === 'customer') {
+          customerId = decoded.userId;
+        }
+      }
+    } catch (e) {
+      // ignore invalid token; treat as guest
+      customerId = null;
+    }
+
+    // If shopId provided, generate per-shop numeric orderNumber atomically
     let orderNumber = null;
     if (shopId) {
       const seq = await Shop.findByIdAndUpdate(shopId, { $inc: { lastOrderNumber: 1 } }, { new: true });
       if (seq) orderNumber = seq.lastOrderNumber;
     }
 
-    const orderPayload = { shop: shopId || null, orderNumber, customerName, phone: normalizedPhone, items, total, status: 'received' };
+    const orderPayload = {
+      shop: shopId || null,
+      orderNumber,
+      customer: customerId || null,
+      customerName,
+      phone: normalizedPhone,
+      address: address && typeof address === 'object' ? {
+        label: address.label || '',
+        address: address.address || '',
+        phone: address.phone || '',
+        pincode: address.pincode || '',
+      } : undefined,
+      items,
+      total,
+      status: 'received',
+    };
+
     const order = await Order.create(orderPayload);
 
+    // notify customer via Twilio (non-blocking)
     sendWhatsAppMessageSafe(normalizedPhone, `Hi ${customerName}, we received your order ${order.orderNumber ? `#${String(order.orderNumber).padStart(6,'0')}` : order._id}. Total: ₹${total}`).catch(() => {});
 
+    // emit socket (use order._id)
     try {
-      emitOrderUpdate(order._id.toString(), { orderId: order._id.toString(), status: order.status, orderNumber: orderNumber, at: new Date().toISOString() });
-    } catch (e) { console.error('Socket emit error:', e); }
+      emitOrderUpdate(order._id.toString(), {
+        orderId: order._id.toString(),
+        status: order.status,
+        orderNumber: orderNumber,
+        at: new Date().toISOString(),
+      });
+    } catch (e) {
+      console.error('Socket emit error:', e);
+    }
 
     res.status(201).json(order);
   } catch (err) {
@@ -464,7 +580,7 @@ app.post('/api/orders', async (req, res) => {
   }
 });
 
-// List orders (admin or API key)
+// List orders (admin or API key or merchant)
 app.get('/api/orders', requireApiKeyOrJwt, async (req, res) => {
   try {
     const { shopId } = req.query;
@@ -488,7 +604,7 @@ app.get('/api/orders/:id', async (req, res) => {
   }
 });
 
-// Owner: list shop orders
+// Owner: list shop orders (owner only)
 app.get('/api/shops/:shopId/orders', requireOwner, async (req, res) => {
   try {
     const orders = await Order.find({ shop: req.params.shopId }).sort({ createdAt: -1 }).limit(200).lean();
@@ -518,7 +634,143 @@ app.patch('/api/orders/:id/status', requireApiKeyOrJwt, async (req, res) => {
   }
 });
 
-// Twilio webhook
+/* Customer endpoints */
+
+// Get current customer profile
+app.get('/api/customers/me', requireCustomer, async (req, res) => {
+  try {
+    const cust = await Customer.findById(req.customerId).select('-__v').lean();
+    if (!cust) return res.status(404).json({ error: 'not found' });
+    res.json(cust);
+  } catch (e) {
+    console.error('customers/me error', e);
+    res.status(500).json({ error: 'failed' });
+  }
+});
+
+// Update current customer profile (name, phone)
+app.patch('/api/customers/me', requireCustomer, async (req, res) => {
+  try {
+    const update = {};
+    if (typeof req.body.name !== 'undefined') update.name = req.body.name;
+    if (typeof req.body.phone !== 'undefined') {
+      // normalize phone
+      const digits = String(req.body.phone).replace(/\D/g, '');
+      if (digits.length === 10) update.phone = `+91${digits}`;
+      else if (digits.length >= 7) update.phone = `+${digits}`;
+      else return res.status(400).json({ error: 'invalid phone' });
+    }
+    if (Object.keys(update).length === 0) return res.status(400).json({ error: 'nothing to update' });
+    const cust = await Customer.findByIdAndUpdate(req.customerId, update, { new: true }).lean();
+    if (!cust) return res.status(404).json({ error: 'not found' });
+    res.json(cust);
+  } catch (e) {
+    console.error('customers/me patch error', e);
+    res.status(500).json({ error: 'failed' });
+  }
+});
+
+// List addresses
+app.get('/api/customers/addresses', requireCustomer, async (req, res) => {
+  try {
+    const cust = await Customer.findById(req.customerId).select('addresses').lean();
+    if (!cust) return res.status(404).json({ error: 'not found' });
+    res.json(cust.addresses || []);
+  } catch (e) {
+    console.error('addresses list error', e);
+    res.status(500).json({ error: 'failed' });
+  }
+});
+
+// Add address
+app.post('/api/customers/addresses', requireCustomer, async (req, res) => {
+  try {
+    const { label, address, phone, pincode } = req.body || {};
+    if (!address || !pincode) return res.status(400).json({ error: 'address and pincode required' });
+    // normalize phone if provided
+    let phoneNorm = '';
+    if (phone) {
+      const digits = String(phone).replace(/\D/g, '');
+      phoneNorm = digits.length === 10 ? `+91${digits}` : (digits.length >= 7 ? `+${digits}` : '');
+    }
+    const addr = { label: label || '', address, phone: phoneNorm, pincode: String(pincode).trim() };
+    const cust = await Customer.findById(req.customerId);
+    if (!cust) return res.status(404).json({ error: 'not found' });
+    cust.addresses.push(addr);
+    await cust.save();
+    res.status(201).json(cust.addresses[cust.addresses.length - 1]);
+  } catch (e) {
+    console.error('add address error', e);
+    res.status(500).json({ error: 'failed' });
+  }
+});
+
+// Edit address
+app.patch('/api/customers/addresses/:addrId', requireCustomer, async (req, res) => {
+  try {
+    const { label, address, phone, pincode } = req.body || {};
+    const cust = await Customer.findById(req.customerId);
+    if (!cust) return res.status(404).json({ error: 'not found' });
+    const addr = cust.addresses.id(req.params.addrId);
+    if (!addr) return res.status(404).json({ error: 'address not found' });
+    if (typeof label !== 'undefined') addr.label = label;
+    if (typeof address !== 'undefined') addr.address = address;
+    if (typeof pincode !== 'undefined') addr.pincode = String(pincode);
+    if (typeof phone !== 'undefined') {
+      const digits = String(phone).replace(/\D/g, '');
+      addr.phone = digits.length === 10 ? `+91${digits}` : (digits.length >= 7 ? `+${digits}` : '');
+    }
+    await cust.save();
+    res.json(addr);
+  } catch (e) {
+    console.error('edit address error', e);
+    res.status(500).json({ error: 'failed' });
+  }
+});
+
+// Delete address
+app.delete('/api/customers/addresses/:addrId', requireCustomer, async (req, res) => {
+  try {
+    const cust = await Customer.findById(req.customerId);
+    if (!cust) return res.status(404).json({ error: 'not found' });
+    const addr = cust.addresses.id(req.params.addrId);
+    if (!addr) return res.status(404).json({ error: 'address not found' });
+    addr.remove();
+    await cust.save();
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('delete address error', e);
+    res.status(500).json({ error: 'failed' });
+  }
+});
+
+// Customer: list own orders
+app.get('/api/customers/orders', requireCustomer, async (req, res) => {
+  try {
+    const orders = await Order.find({ customer: req.customerId }).sort({ createdAt: -1 }).lean();
+    res.json(orders);
+  } catch (e) {
+    console.error('customer orders error', e);
+    res.status(500).json({ error: 'failed' });
+  }
+});
+
+// Customer: get single order (owned)
+app.get('/api/customers/orders/:id', requireCustomer, async (req, res) => {
+  try {
+    const order = await Order.findById(req.params.id).lean();
+    if (!order) return res.status(404).json({ error: 'not found' });
+    if (!order.customer || String(order.customer) !== String(req.customerId)) {
+      return res.status(403).json({ error: 'forbidden' });
+    }
+    res.json(order);
+  } catch (e) {
+    console.error('customer order detail error', e);
+    res.status(400).json({ error: 'invalid id' });
+  }
+});
+
+/* Twilio webhook (unchanged) */
 app.post('/webhook/whatsapp', async (req, res) => {
   const from = (req.body.From || req.body.from || '').toString();
   const rawBody = (req.body.Body || req.body.body || '').toString().trim();
