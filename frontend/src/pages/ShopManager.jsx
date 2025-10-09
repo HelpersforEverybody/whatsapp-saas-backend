@@ -435,45 +435,58 @@ async function verifyOtpAndLogin() {
         </div>
 
         {/* Auth modal */}
-        {authModalOpen && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-            <div className="bg-white p-4 rounded w-[420px]">
-              <h3 className="font-semibold mb-2">Login / Verify by OTP</h3>
+{authModalOpen && (
+  <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+    <div className="bg-white p-4 rounded w-[420px]">
+      <h3 className="font-semibold mb-2">Login / Verify by OTP</h3>
 
-              {!otpSent ? (
-                <>
-                  <div className="text-sm text-gray-600 mb-2">Enter phone to receive OTP</div>
-                  <div className="flex gap-2">
-                    <span className="px-3 py-2 bg-gray-100 select-none">+91</span>
-                    <input
-                      value={otpDigitsInput || customerPhone}
-                      onChange={(e) => setOtpDigitsInput(e.target.value.replace(/\D/g, "").slice(0,10))}
-                      placeholder="10-digit phone"
-                      className="p-2 border rounded flex-1"
-                    />
-                  </div>
-                  <div className="mt-3 flex justify-end gap-2">
-                    <button onClick={() => { setAuthModalOpen(false); setAuthMsg(""); setOtpDigitsInput(""); }} className="px-3 py-1 bg-gray-200 rounded">Cancel</button>
-                    <button onClick={() => sendOtpToPhone(otpDigitsInput || customerPhone)} className="px-3 py-1 bg-blue-600 text-white rounded">Send OTP</button>
-                  </div>
-                </>
-              ) : (
-                <>
-                  <div className="text-sm text-gray-600 mb-2">Enter the 6-digit OTP sent to {otpPhone}</div>
-                  <input value={otpCode} onChange={e => setOtpCode(e.target.value.replace(/\D/g,'').slice(0,6))} placeholder="OTP" className="p-2 border rounded w-full mb-3" />
-                  <div className="flex justify-between items-center">
-                    <div className="text-sm text-gray-600">{authMsg}</div>
-                    <div className="flex gap-2">
-                      <button onClick={() => { setOtpSent(false); setOtpCode(""); setAuthMsg(""); }} className="px-3 py-1 bg-gray-200 rounded">Back</button>
-                      <button onClick={verifyOtpAndLogin} className="px-3 py-1 bg-green-600 text-white rounded">Verify & Login</button>
-                    </div>
-                  </div>
-                </>
-              )}
-              {authMsg && <div className="mt-3 text-sm text-red-600">{authMsg}</div>}
+      {!otpSent ? (
+        <>
+          <div className="text-sm text-gray-600 mb-2">Enter your name and phone to receive OTP</div>
+
+          <div className="mb-2">
+            <label className="text-sm block mb-1">Name</label>
+            <input
+              value={customerName}
+              onChange={(e) => setCustomerName(e.target.value)}
+              placeholder="Your full name"
+              className="p-2 border rounded w-full"
+            />
+          </div>
+
+          <div className="flex gap-2 items-center mb-3">
+            <span className="px-3 py-2 bg-gray-100 select-none">+91</span>
+            <input
+              value={otpDigitsInput || customerPhone}
+              onChange={(e) => setOtpDigitsInput(e.target.value.replace(/\D/g, "").slice(0, 10))}
+              placeholder="10-digit phone"
+              className="p-2 border rounded flex-1"
+            />
+          </div>
+
+          <div className="mt-3 flex justify-end gap-2">
+            <button onClick={() => { setAuthModalOpen(false); setAuthMsg(""); setOtpDigitsInput(""); }} className="px-3 py-1 bg-gray-200 rounded">Cancel</button>
+            <button onClick={() => sendOtpToPhone(otpDigitsInput || customerPhone, customerName)} className="px-3 py-1 bg-blue-600 text-white rounded">Send OTP</button>
+          </div>
+        </>
+      ) : (
+        <>
+          <div className="text-sm text-gray-600 mb-2">Enter the 6-digit OTP sent to {otpPhone}</div>
+          <input value={otpCode} onChange={e => setOtpCode(e.target.value.replace(/\D/g,'').slice(0,6))} placeholder="OTP" className="p-2 border rounded w-full mb-3" />
+          <div className="flex justify-between items-center">
+            <div className="text-sm text-gray-600">{authMsg}</div>
+            <div className="flex gap-2">
+              <button onClick={() => { setOtpSent(false); setOtpCode(""); setAuthMsg(""); }} className="px-3 py-1 bg-gray-200 rounded">Back</button>
+              <button onClick={verifyOtpAndLogin} className="px-3 py-1 bg-green-600 text-white rounded">Verify & Login</button>
             </div>
           </div>
-        )}
+        </>
+      )}
+      {authMsg && <div className="mt-3 text-sm text-red-600">{authMsg}</div>}
+    </div>
+  </div>
+)}
+
 
         {/* Address modal */}
         {addressModalOpen && (
