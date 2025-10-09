@@ -315,7 +315,7 @@ async function sendOtpToPhone(digits10, nameToKeepIfSignup) {
     if (typeof editIndex === "number") {
       setAddressForm({ ...addresses[editIndex] });
     } else {
-      setAddressForm({ name: customerName || "", phone: customerPhone || "", address: "", pincode: selectedShop?.pincode || "" });
+      setAddressForm({ name: "", phone: "", address: "", pincode: selectedShop?.pincode || "" });
     }
     setAddressMsg("");
     setAddressModalOpen(true);
@@ -478,10 +478,6 @@ async function sendOtpToPhone(digits10, nameToKeepIfSignup) {
                 </div>
               ))
             }
-
-            <div className="mt-3">
-              <button onClick={() => openAddAddressModal()} className="px-3 py-1 bg-gray-200 rounded">Add Delivery Address</button>
-            </div>
           </div>
 
           <div className="col-span-2">
