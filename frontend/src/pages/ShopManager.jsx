@@ -682,31 +682,32 @@ export default function ShopManager() {
 
       {/* Cart modal (confirm & place order) */}
       {cartModalOpen && (
-        <Cart
-          items={cartSummary().items}
-          totalQty={cartSummary().totalQty}
-          totalPrice={cartSummary().totalPrice}
-          addresses={addresses}
-          onAddAddress={() => openAddAddressModal(null)}
-          onEditAddress={(idx) => openAddAddressModal(idx)}
-          onDeleteAddress={(idx) => deleteAddress(idx)}
-          onClose={() => setCartModalOpen(false)}
-          onConfirm={async (addressIdx) => {
-            const chosen = addresses[addressIdx];
-            if (!chosen) {
-              alert("Select or add address first");
-              return;
-            }
-            const result = await placeOrderFinal(chosen);
-            if (result.ok) {
-              alert("Order placed successfully");
-              setCartModalOpen(false);
-            } else {
-              alert("Order failed: " + (result.message || "unknown"));
-            }
-          }}
-        />
-      )}
+  <Cart
+    items={cartSummary().items}
+    totalQty={cartSummary().totalQty}
+    totalPrice={cartSummary().totalPrice}
+    addresses={addresses}
+    onAddAddress={() => openAddAddressModal(null)}
+    onEditAddress={(idx) => openAddAddressModal(idx)}
+    onDeleteAddress={(idx) => {
+      // confirm delete
+      if (!window.confirm("Delete this address?")) return;
+      deleteAddress(idx);
+    }}
+    onClose={() => setCartModalOpen(false)}
+    onConfirm={async (addressIdx) => {
+      const chosen = addresses[addressIdx];
+      const result = await placeOrderFinal(chosen);
+      if (result.ok) {
+        alert("Order placed successfully");
+        setCartModalOpen(false);
+      } else {
+        alert("Order failed: " + (result.message || "unknown"));
+      }
+    }}
+  />
+)}
+
     </div>
   );
 }
