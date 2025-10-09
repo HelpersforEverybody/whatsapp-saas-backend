@@ -164,67 +164,95 @@ export default function ShopManager() {
     if (digits.length === 10) setCustomerPhone(digits.slice(-10));
   }
 
-  // ---- Auth (OTP) helpers ----
-  async function sendOtpToPhone(digits10) {
-    setAuthMsg("");
-    try {
-      const digits = String(digits10 || "").replace(/\D/g, "").slice(-10);
-      if (digits.length !== 10) {
-        setAuthMsg("Enter 10 digits to send OTP");
-        return;
-      }
-      const normalized = `+91${digits}`;
-      const res = await fetch(`${API_BASE}/auth/send-otp`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ phone: normalized }),
-      });
-      if (!res.ok) {
-        const txt = await res.text();
-        throw new Error(txt || "Failed to send OTP");
-      }
-      setOtpSent(true);
-      setOtpPhone(normalized);
-      setOtpDigitsInput(digits);
-      setAuthMsg("OTP sent (demo: check server logs).");
-    } catch (e) {
-      console.error("sendOtp error", e);
-      setAuthMsg("Error sending OTP: " + (e.message || e));
+ // Replace existing sendOtpToPhone with this
+async function sendOtpToPhone(digits10, nameToSave) {
+  setAuthMsg("");
+  try {
+    const digits = String(digits10 || "").replace(/\D/g, "").slice(-10);
+    if (digits.length !== 10) {
+      setAuthMsg("Enter 10 digits to send OTP");
+      return;
     }
-  }
+    if (!nameToSave || !String(nameToSave).trim()) {
+      setAuthMsg("Please enter your name before requesting OTP");
+      return;
+    }
 
-  async function verifyOtpAndLogin() {
-    setAuthMsg("");
-    try {
-      if (!otpPhone || !otpCode) return setAuthMsg("Phone and OTP required");
-      const res = await fetch(`${API_BASE}/auth/verify-otp`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ phone: otpPhone, otp: otpCode }),
-      });
-      if (!res.ok) {
-        const txt = await res.text();
-        throw new Error(txt || "OTP verify failed");
-      }
-      const data = await res.json(); // { token, userId }
-      if (!data.token) throw new Error("No token returned");
-      localStorage.setItem("customer_token", data.token);
-      const digits = (otpPhone || "").replace(/\D/g, "").slice(-10);
-      localStorage.setItem("customer_phone", digits);
-      if (customerName && customerName.trim()) localStorage.setItem("customer_name", customerName.trim());
-      else localStorage.setItem("customer_name", `+91${digits}`);
-      setCustomerToken(data.token);
-      setCustomerName(localStorage.getItem("customer_name") || "");
-      setCustomerPhone(localStorage.getItem("customer_phone") || "");
-      setAuthModalOpen(false);
-      setOtpSent(false);
-      setOtpCode("");
-      setAuthMsg("Logged in");
-    } catch (e) {
-      console.error("verifyOtp error", e);
-      setAuthMsg("Verify failed: " + (e.message || e));
+    const normalized = `+91${digits}`;
+    // call backend to send OTP
+    const res = await fetch(`${API_BASE}/auth/send-otp`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ phone: normalized }),
+    });
+    if (!res.ok) {
+      const txt = await res.text();
+      throw new Error(txt || "Failed to send OTP");
     }
+
+    // keep the name candidate until verify; we'll save permanently on successful verify
+    setOtpSent(true);
+    setOtpPhone(normalized);
+    setOtpDigitsInput(digits);
+    setAuthMsg("OTP sent (demo: check server logs).");
+    // temporarily keep the provided name so verify can use it
+    setCustomerName(nameToSave || "");
+  } catch (e) {
+    console.error("sendOtp error", e);
+    setAuthMsg("Error sending OTP: " + (e.message || e));
   }
+}
+
+
+  // Replace existing verifyOtpAndLogin with this
+async function verifyOtpAndLogin() {
+  setAuthMsg("");
+  try {
+    if (!otpPhone || !otpCode) return setAuthMsg("Phone and OTP required");
+
+    const res = await fetch(`${API_BASE}/auth/verify-otp`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ phone: otpPhone, otp: otpCode }),
+    });
+    if (!res.ok) {
+      const txt = await res.text();
+      throw new Error(txt || "OTP verify failed");
+    }
+    const data = await res.json(); // { token, userId }
+    if (!data.token) throw new Error("No token returned");
+
+    // Save token and canonical customer info
+    localStorage.setItem("customer_token", data.token);
+    setCustomerToken(data.token);
+
+    // Save phone digits
+    const digits = (otpPhone || "").replace(/\D/g, "").slice(-10);
+    localStorage.setItem("customer_phone", digits);
+    setCustomerPhone(digits);
+
+    // Save name as well — customerName may have been set earlier via sendOtpToPhone
+    const nameCandidate = (customerName || "").trim();
+    if (nameCandidate) {
+      localStorage.setItem("customer_name", nameCandidate);
+      setCustomerName(nameCandidate);
+    } else {
+      // fallback to phone if no name provided (shouldn't happen because we validated)
+      localStorage.setItem("customer_name", `+91${digits}`);
+      setCustomerName(`+91${digits}`);
+    }
+
+    // Clear auth UI
+    setAuthModalOpen(false);
+    setOtpSent(false);
+    setOtpCode("");
+    setAuthMsg("Logged in");
+  } catch (e) {
+    console.error("verifyOtp error", e);
+    setAuthMsg("Verify failed: " + (e.message || e));
+  }
+}
+
 
   function logoutCustomer() {
     localStorage.removeItem("customer_token");
