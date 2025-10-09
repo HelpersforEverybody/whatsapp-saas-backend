@@ -610,14 +610,3 @@ async function verifyOtpAndLogin() {
     </div>
   );
 
-  // helper used above to avoid hoist issues
-  function cartSummary() {
-    return cartSummaryInner();
-  }
-  function cartSummaryInner() {
-    const items = cartItemsArray();
-    const totalQty = items.reduce((s, i) => s + i.qty, 0);
-    const totalPrice = items.reduce((s, i) => s + i.qty * i.price, 0);
-    return { items, totalQty, totalPrice };
-  }
-}
