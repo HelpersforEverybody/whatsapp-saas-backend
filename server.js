@@ -356,12 +356,14 @@ app.post('/auth/send-otp', async (req, res) => {
   }
 });
 
-// verify-otp: only issues token if phone belongs to an existing Customer (no auto-create)
+// verify-otp: issues token only when OTP ok.
+// If customer doesn't exist, will auto-create WHEN the request includes `name` (or signup=true).
 app.post('/auth/verify-otp', async (req, res) => {
   try {
-    const { phone, otp } = req.body || {};
+    const { phone, otp, name, signup } = req.body || {};
     if (!phone || !otp) return res.status(400).json({ error: 'phone and otp required' });
 
+    // normalize incoming phone same as normalizePhoneInput helper
     const normalized = normalizePhoneInput(phone);
     if (!normalized) return res.status(400).json({ error: 'invalid phone format' });
 
@@ -370,15 +372,21 @@ app.post('/auth/verify-otp', async (req, res) => {
     if (Date.now() > rec.expiresAt) { otpStore.delete(normalized); return res.status(400).json({ error: 'otp expired' }); }
     if (String(otp).trim() !== String(rec.otp)) return res.status(401).json({ error: 'invalid otp' });
 
-    // OTP OK — check Customer exists
-    const customer = await Customer.findOne({ phone: normalized });
+    // OTP ok — find customer
+    let customer = await Customer.findOne({ phone: normalized });
     if (!customer) {
-      // require explicit signup first
-      return res.status(401).json({ error: 'phone not registered. Please sign up first via /auth/customer-signup' });
+      // if client provided name (or signup flag) create customer automatically
+      if (signup || (name && String(name).trim().length > 1)) {
+        const createName = (name && String(name).trim()) ? String(name).trim() : 'Customer';
+        customer = await Customer.create({ name: createName, phone: normalized });
+      } else {
+        return res.status(401).json({ error: 'phone not registered. Please sign up first via /auth/customer-signup' });
+      }
     }
 
-    // success: issue JWT token for customer
+    // OTP used — remove from store
     otpStore.delete(normalized);
+
     if (!JWT_SECRET) return res.status(500).json({ error: 'server misconfigured: JWT_SECRET missing' });
     const token = jwt.sign({ role: 'customer', userId: String(customer._id), phone: normalized }, JWT_SECRET, { expiresIn: '7d' });
 
@@ -388,6 +396,7 @@ app.post('/auth/verify-otp', async (req, res) => {
     return res.status(500).json({ error: 'server error' });
   }
 });
+
 
 /* API routes */
 
