@@ -13,6 +13,7 @@ export default function ShopManager() {
 
   // customer info (simple)
   const [customerName, setCustomerName] = useState("");
+  // store only 10-digit numeric string here (we show +91 in UI)
   const [customerPhone, setCustomerPhone] = useState("");
   // start empty — do NOT auto-apply saved pincode on load
   const [pincode, setPincode] = useState("");
@@ -20,6 +21,22 @@ export default function ShopManager() {
 
   // cart: { itemId: qty }
   const [cart, setCart] = useState({});
+
+  // inline errors
+  const [inlinePhoneError, setInlinePhoneError] = useState("");
+
+  // Auth + address states
+  const [customerToken, setCustomerToken] = useState(localStorage.getItem("customer_token") || "");
+  const [authModalOpen, setAuthModalOpen] = useState(false);
+  const [otpSent, setOtpSent] = useState(false);
+  const [otpPhone, setOtpPhone] = useState(""); // normalized +91... used for verify
+  const [otpDigitsInput, setOtpDigitsInput] = useState(""); // digits only (10) for send action
+  const [otpCode, setOtpCode] = useState("");
+  const [authMsg, setAuthMsg] = useState("");
+
+  const [addressModalOpen, setAddressModalOpen] = useState(false);
+  const [customerAddress, setCustomerAddress] = useState(localStorage.getItem("customer_address") || "");
+  const [addressMsg, setAddressMsg] = useState("");
 
   // On mount: load all shops (no pincode applied)
   useEffect(() => {
@@ -51,7 +68,7 @@ export default function ShopManager() {
       const data = await res.json();
       setShops(data);
       if (data.length) {
-        // preserve previous selected shop if present, else pick first
+        // preserve previous selected shop when possible, else pick first
         const found = selectedShop && data.find(s => selectedShop && s._id === selectedShop._id) ? data.find(s => s._id === selectedShop._id) : data[0];
         setSelectedShop(found);
       } else {
@@ -141,19 +158,118 @@ export default function ShopManager() {
     localStorage.setItem("customer_pincode", pin || "");
   }
 
-  // auto-prefix phone on blur: if 10 digits and no +, add +91
+  // auto-prefix phone on blur: if 10 digits and no +, add +91 to internal storage when needed
   function handlePhoneBlur() {
+    // We store only digits in customerPhone state; when needed we prefix +91 when sending
     const v = (customerPhone || "").trim();
     if (!v) return;
-    if (v.startsWith("+")) return;
     const digits = v.replace(/\D/g, "");
     if (digits.length === 10) {
-      setCustomerPhone("+91" + digits);
+      setCustomerPhone(digits.slice(-10));
     }
   }
 
+  // ---- Auth (OTP) helpers ----
+  async function sendOtpToPhone(digits10) {
+    setAuthMsg("");
+    try {
+      const digits = String(digits10 || "").replace(/\D/g, "").slice(-10);
+      if (digits.length !== 10) {
+        setAuthMsg("Enter 10 digits to send OTP");
+        return;
+      }
+      const normalized = `+91${digits}`;
+      // call backend
+      const res = await fetch(`${API_BASE}/auth/send-otp`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ phone: normalized }),
+      });
+      if (!res.ok) {
+        const txt = await res.text();
+        throw new Error(txt || "Failed to send OTP");
+      }
+      setOtpSent(true);
+      setOtpPhone(normalized);
+      setOtpDigitsInput(digits);
+      setAuthMsg("OTP sent (demo: check server logs).");
+    } catch (e) {
+      console.error("sendOtp error", e);
+      setAuthMsg("Error sending OTP: " + (e.message || e));
+    }
+  }
+
+  async function verifyOtpAndLogin() {
+    setAuthMsg("");
+    try {
+      if (!otpPhone || !otpCode) return setAuthMsg("Phone and OTP required");
+      const res = await fetch(`${API_BASE}/auth/verify-otp`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ phone: otpPhone, otp: otpCode }),
+      });
+      if (!res.ok) {
+        const txt = await res.text();
+        throw new Error(txt || "OTP verify failed");
+      }
+      const data = await res.json(); // { token, userId }
+      if (!data.token) throw new Error("No token returned");
+      localStorage.setItem("customer_token", data.token);
+      setCustomerToken(data.token);
+      setAuthModalOpen(false);
+      setOtpSent(false);
+      setOtpCode("");
+      setAuthMsg("Logged in");
+      // set phone input to digits only (strip +91)
+      setCustomerPhone((otpPhone || "").replace(/\D/g, "").slice(-10));
+    } catch (e) {
+      console.error("verifyOtp error", e);
+      setAuthMsg("Verify failed: " + (e.message || e));
+    }
+  }
+
+  function logoutCustomer() {
+    localStorage.removeItem("customer_token");
+    setCustomerToken("");
+  }
+
+  // Address helpers
+  function openAddressModalIfNeeded() {
+    const addr = localStorage.getItem("customer_address") || customerAddress || "";
+    if (!addr || addr.trim().length < 5) {
+      setAddressModalOpen(true);
+      return false;
+    }
+    setCustomerAddress(addr);
+    return true;
+  }
+
+  function saveAddressAndClose() {
+    if (!customerAddress || customerAddress.trim().length < 5) {
+      setAddressMsg("Address is required (min 5 chars)");
+      return;
+    }
+    localStorage.setItem("customer_address", customerAddress.trim());
+    setAddressModalOpen(false);
+    setAddressMsg("");
+  }
+
+  // Place order now guarded by auth & address
   async function placeOrder(setInlineError) {
-    // setInlineError is optional function to set inline message under phone input
+    // require login first
+    if (!customerToken) {
+      setAuthModalOpen(true);
+      return;
+    }
+
+    // require address
+    const savedAddr = localStorage.getItem("customer_address") || customerAddress || "";
+    if (!savedAddr || savedAddr.trim().length < 5) {
+      setAddressModalOpen(true);
+      return;
+    }
+
+    // continue validation
     if (!selectedShop) {
       if (setInlineError) setInlineError("Select a shop");
       else alert("Select a shop");
@@ -165,9 +281,9 @@ export default function ShopManager() {
       else alert("Cart is empty");
       return;
     }
-    // phone validation: must be +91xxxxxxxxxx or 10 digits
+    // phone validation: require 10 digits stored in customerPhone
     const phoneDigits = (customerPhone || "").replace(/\D/g, "");
-    if (!(phoneDigits.length === 10 || (customerPhone || "").startsWith("+91"))) {
+    if (!(phoneDigits.length === 10)) {
       if (setInlineError) setInlineError("Enter valid 10-digit phone number (we prefix +91)");
       else alert("Enter valid phone");
       return;
@@ -182,7 +298,8 @@ export default function ShopManager() {
     const payload = {
       shop: selectedShop._id,
       customerName,
-      phone: customerPhone,
+      phone: `+91${phoneDigits}`,
+      address: savedAddr.trim(),
       items: items.map(i => ({ name: i.name, qty: i.qty, price: i.price })),
     };
 
@@ -191,7 +308,8 @@ export default function ShopManager() {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "x-api-key": API_KEY // leave API_KEY if you use server API key for public requests; otherwise server accepts guest orders
+          "x-api-key": API_KEY,
+          ...(customerToken ? { Authorization: `Bearer ${customerToken}` } : {}),
         },
         body: JSON.stringify(payload)
       });
@@ -248,13 +366,13 @@ export default function ShopManager() {
   }
 
   const { totalQty, totalPrice } = cartSummary();
-  const [inlinePhoneError, setInlinePhoneError] = useState("");
 
   return (
     <div className="min-h-screen p-6 bg-gray-50">
       <div className="max-w-5xl mx-auto bg-white p-6 rounded shadow">
         <h1 className="text-2xl font-semibold mb-4">Shops & Menu</h1>
 
+        {/* Top form */}
         <div className="mb-4 p-4 border rounded bg-gray-50">
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
             <input
@@ -263,31 +381,40 @@ export default function ShopManager() {
               placeholder="Your Name"
               className="p-2 border rounded w-full"
             />
-          <div>
-  <label className="block text-sm text-gray-600 mb-1">Phone Number</label>
-  <div className="flex items-center border rounded overflow-hidden">
-    <span className="px-3 py-2 bg-gray-100 text-gray-700 select-none">+91</span>
-    <input
-      type="text"
-      inputMode="numeric"
-      pattern="[0-9]*"
-      maxLength="10"
-      value={customerPhone}
-      onChange={(e) => {
-        // remove any non-digits and limit to 10
-        const digits = e.target.value.replace(/\D/g, "").slice(0, 10);
-        setCustomerPhone(digits);
-        setInlinePhoneError("");
-      }}
-      placeholder="Enter 10-digit number"
-      className="p-2 flex-1 outline-none"
-    />
-  </div>
-  {inlinePhoneError ? (
-    <div className="text-sm text-red-600 mt-1">{inlinePhoneError}</div>
-  ) : null}
-</div>
 
+            {/* Phone input with +91 prefix visible */}
+            <div>
+              <label className="block text-sm text-gray-600 mb-1">Phone Number</label>
+              <div className="flex items-center border rounded overflow-hidden">
+                <span className="px-3 py-2 bg-gray-100 text-gray-700 select-none">+91</span>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  pattern="[0-9]*"
+                  maxLength="10"
+                  value={customerPhone}
+                  onChange={(e) => {
+                    const digits = e.target.value.replace(/\D/g, "").slice(0, 10);
+                    setCustomerPhone(digits);
+                    setInlinePhoneError("");
+                  }}
+                  onBlur={handlePhoneBlur}
+                  placeholder="Enter 10-digit number"
+                  className="p-2 flex-1 outline-none"
+                />
+              </div>
+              {inlinePhoneError ? (
+                <div className="text-sm text-red-600 mt-1">{inlinePhoneError}</div>
+              ) : null}
+              {/* show login badge when logged in */}
+              {customerToken ? (
+                <div className="text-xs text-green-700 mt-1">Logged in</div>
+              ) : (
+                <div className="text-xs text-gray-600 mt-1">You will be asked to login before placing order</div>
+              )}
+            </div>
+
+            {/* Pincode */}
             <div>
               <input
                 value={pincode}
@@ -308,6 +435,66 @@ export default function ShopManager() {
             </div>
           </div>
         </div>
+
+        {/* Auth modal */}
+        {authModalOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+            <div className="bg-white p-4 rounded w-[420px]">
+              <h3 className="font-semibold mb-2">Login / Verify by OTP</h3>
+
+              {!otpSent ? (
+                <>
+                  <div className="text-sm text-gray-600 mb-2">Enter phone to receive OTP</div>
+                  <div className="flex gap-2">
+                    <span className="px-3 py-2 bg-gray-100 select-none">+91</span>
+                    <input
+                      value={otpDigitsInput || customerPhone}
+                      onChange={(e) => {
+                        const d = e.target.value.replace(/\D/g, "").slice(0, 10);
+                        setOtpDigitsInput(d);
+                      }}
+                      placeholder="10-digit phone"
+                      className="p-2 border rounded flex-1"
+                    />
+                  </div>
+                  <div className="mt-3 flex justify-end gap-2">
+                    <button onClick={() => { setAuthModalOpen(false); setAuthMsg(""); setOtpDigitsInput(""); }} className="px-3 py-1 bg-gray-200 rounded">Cancel</button>
+                    <button onClick={() => sendOtpToPhone(otpDigitsInput || customerPhone)} className="px-3 py-1 bg-blue-600 text-white rounded">Send OTP</button>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="text-sm text-gray-600 mb-2">Enter the 6-digit OTP sent to {otpPhone}</div>
+                  <input value={otpCode} onChange={e => setOtpCode(e.target.value.replace(/\D/g,'').slice(0,6))} placeholder="OTP" className="p-2 border rounded w-full mb-3" />
+                  <div className="flex justify-between items-center">
+                    <div className="text-sm text-gray-600">{authMsg}</div>
+                    <div className="flex gap-2">
+                      <button onClick={() => { setOtpSent(false); setOtpCode(""); setAuthMsg(""); }} className="px-3 py-1 bg-gray-200 rounded">Back</button>
+                      <button onClick={verifyOtpAndLogin} className="px-3 py-1 bg-green-600 text-white rounded">Verify & Login</button>
+                    </div>
+                  </div>
+                </>
+              )}
+              {authMsg && <div className="mt-3 text-sm text-red-600">{authMsg}</div>}
+            </div>
+          </div>
+        )}
+
+        {/* Address modal */}
+        {addressModalOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+            <div className="bg-white p-4 rounded w-[480px]">
+              <h3 className="font-semibold mb-2">Delivery Address (required)</h3>
+              <div className="mb-2 text-sm text-gray-600">Please enter the full delivery address before placing the order.</div>
+              <textarea value={customerAddress} onChange={e => setCustomerAddress(e.target.value)} className="w-full p-2 border rounded h-28" />
+              <div className="mt-3 flex justify-end gap-2">
+                <button onClick={() => { setAddressModalOpen(false); setAddressMsg(""); }} className="px-3 py-1 bg-gray-200 rounded">Cancel</button>
+                <button onClick={saveAddressAndClose} className="px-3 py-1 bg-blue-600 text-white rounded">Save Address</button>
+              </div>
+              {addressMsg && <div className="mt-2 text-sm text-red-600">{addressMsg}</div>}
+            </div>
+          </div>
+        )}
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <div className="col-span-1">
