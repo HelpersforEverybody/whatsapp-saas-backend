@@ -199,49 +199,57 @@ export default function ShopManager() {
     }
   }
 
-  const verifyOtpAndLogin = async () => {
-  try {
-    const payload = { phone: otpPhone, otp: otpCode };
+  // NOTE: use authMode (login/signup). On signup include name + signup:true
+  async function verifyOtpAndLogin() {
+    setAuthMsg("");
+    try {
+      if (!otpPhone || !otpCode) {
+        setAuthMsg("Phone and OTP required");
+        return;
+      }
 
-    // If the user came from Signup tab, include name + signup flag
-    if (activeTab === "signup") {
-      payload.name = customerName; // whatever state you use for the name input
-      payload.signup = true;
-    }
+      const payload = { phone: otpPhone, otp: otpCode };
+      if (authMode === "signup") {
+        payload.name = customerName || "";
+        payload.signup = true;
+      }
 
-    const res = await fetch(`${API_BASE}/auth/verify-otp`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
+      const res = await fetch(`${API_BASE}/auth/verify-otp`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
 
-    const data = await res.json();
+      const data = await res.json();
 
-    if (res.ok && data.token) {
-      localStorage.setItem("customer_token", data.token);
-      localStorage.setItem("customer_phone", data.phone);
-      localStorage.setItem("customer_name", data.name || "");
-      setCustomer({ token: data.token, phone: data.phone, name: data.name });
-      setShowOtpModal(false);
-      setOtpError("");
-    } else {
-      setOtpError(JSON.stringify(data));
-    }
-  } catch (err) {
-    console.error("verifyOtp error", err);
-    setOtpError(err.toString());
-  }
-};
+      if (!res.ok) {
+        // backend returns json error
+        setAuthMsg("Verify failed: " + (data && data.error ? data.error : JSON.stringify(data)));
+        console.error("verifyOtp error", data);
+        return;
+      }
 
+      if (data && data.token) {
+        // Save to localStorage and local state
+        localStorage.setItem("customer_token", data.token);
+        localStorage.setItem("customer_phone", (data.phone || otpPhone).replace(/\D/g, "").slice(-10));
+        localStorage.setItem("customer_name", data.name || (customerName || ""));
 
-      // close modal
-      setAuthModalOpen(false);
-      setOtpSent(false);
-      setOtpCode("");
-      setAuthMsg("Logged in");
+        setCustomerToken(data.token);
+        setCustomerPhone((data.phone || otpPhone).replace(/\D/g, "").slice(-10));
+        setCustomerName(data.name || (customerName || ""));
+
+        // close auth UI
+        setAuthModalOpen(false);
+        setOtpSent(false);
+        setOtpCode("");
+        setAuthMsg("Logged in");
+      } else {
+        setAuthMsg("Verify failed: invalid response");
+      }
     } catch (e) {
       console.error("verifyOtp error", e);
-      setAuthMsg("Verify failed: " + (e.message || e));
+      setAuthMsg("Verify failed: " + (e.message || String(e)));
     }
   }
 
@@ -365,7 +373,7 @@ export default function ShopManager() {
     }
     return (
       <div>
-        <button onClick={() => { setAuthMode("login"); setAuthModalOpen(true); }} className="px-3 py-1 bg-blue-600 text-white rounded">Login / Signup</button>
+        <button onClick={() => { setAuthMode("login"); setOtpSent(false); setAuthModalOpen(true); }} className="px-3 py-1 bg-blue-600 text-white rounded">Login / Signup</button>
       </div>
     );
   }
