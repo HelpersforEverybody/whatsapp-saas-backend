@@ -2,9 +2,9 @@
 import React, { useEffect, useState } from "react";
 import { getApiBase } from "../hooks/useApi";
 import { useNavigate } from "react-router-dom";
-import Cart from "../components/Cart";
-import ProfileMenu from "../components/ProfileMenu"; // if you use it; optional
 
+import Cart from "../components/Cart";
+import ProfileMenu from "../components/ProfileMenu";
 
 const API_BASE = getApiBase();
 const API_KEY = import.meta.env.VITE_API_KEY || "";
@@ -146,7 +146,7 @@ export default function ShopManager() {
     const items = cartItemsArray();
     const totalQty = items.reduce((s, i) => s + i.qty, 0);
     const totalPrice = items.reduce((s, i) => s + i.qty * i.price, 0);
-    return { totalQty, totalPrice, items };
+    return { items, totalQty, totalPrice };
   }
 
   // Validate 6-digit pincode
@@ -166,95 +166,91 @@ export default function ShopManager() {
     if (digits.length === 10) setCustomerPhone(digits.slice(-10));
   }
 
- // Replace existing sendOtpToPhone with this
-async function sendOtpToPhone(digits10, nameToSave) {
-  setAuthMsg("");
-  try {
-    const digits = String(digits10 || "").replace(/\D/g, "").slice(-10);
-    if (digits.length !== 10) {
-      setAuthMsg("Enter 10 digits to send OTP");
-      return;
-    }
-    if (!nameToSave || !String(nameToSave).trim()) {
-      setAuthMsg("Please enter your name before requesting OTP");
-      return;
-    }
+  // ---- Auth (OTP) helpers ----
+  async function sendOtpToPhone(digits10, nameToSave) {
+    setAuthMsg("");
+    try {
+      const digits = String(digits10 || "").replace(/\D/g, "").slice(-10);
+      if (digits.length !== 10) {
+        setAuthMsg("Enter 10 digits to send OTP");
+        return;
+      }
+      if (!nameToSave || !String(nameToSave).trim()) {
+        setAuthMsg("Please enter your name before requesting OTP");
+        return;
+      }
 
-    const normalized = `+91${digits}`;
-    // call backend to send OTP
-    const res = await fetch(`${API_BASE}/auth/send-otp`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ phone: normalized }),
-    });
-    if (!res.ok) {
-      const txt = await res.text();
-      throw new Error(txt || "Failed to send OTP");
-    }
+      const normalized = `+91${digits}`;
+      // call backend to send OTP
+      const res = await fetch(`${API_BASE}/auth/send-otp`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ phone: normalized }),
+      });
+      if (!res.ok) {
+        const txt = await res.text();
+        throw new Error(txt || "Failed to send OTP");
+      }
 
-    // keep the name candidate until verify; we'll save permanently on successful verify
-    setOtpSent(true);
-    setOtpPhone(normalized);
-    setOtpDigitsInput(digits);
-    setAuthMsg("OTP sent (demo: check server logs).");
-    // temporarily keep the provided name so verify can use it
-    setCustomerName(nameToSave || "");
-  } catch (e) {
-    console.error("sendOtp error", e);
-    setAuthMsg("Error sending OTP: " + (e.message || e));
+      setOtpSent(true);
+      setOtpPhone(normalized);
+      setOtpDigitsInput(digits);
+      setAuthMsg("OTP sent (demo: check server logs).");
+      // temporarily keep the provided name so verify can use it
+      setCustomerName(nameToSave || "");
+    } catch (e) {
+      console.error("sendOtp error", e);
+      setAuthMsg("Error sending OTP: " + (e.message || e));
+    }
   }
-}
 
+  async function verifyOtpAndLogin() {
+    setAuthMsg("");
+    try {
+      if (!otpPhone || !otpCode) return setAuthMsg("Phone and OTP required");
 
-  // Replace existing verifyOtpAndLogin with this
-async function verifyOtpAndLogin() {
-  setAuthMsg("");
-  try {
-    if (!otpPhone || !otpCode) return setAuthMsg("Phone and OTP required");
+      const res = await fetch(`${API_BASE}/auth/verify-otp`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ phone: otpPhone, otp: otpCode }),
+      });
+      if (!res.ok) {
+        const txt = await res.text();
+        throw new Error(txt || "OTP verify failed");
+      }
+      const data = await res.json(); // { token, userId }
+      if (!data.token) throw new Error("No token returned");
 
-    const res = await fetch(`${API_BASE}/auth/verify-otp`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ phone: otpPhone, otp: otpCode }),
-    });
-    if (!res.ok) {
-      const txt = await res.text();
-      throw new Error(txt || "OTP verify failed");
+      // Save token and canonical customer info
+      localStorage.setItem("customer_token", data.token);
+      setCustomerToken(data.token);
+
+      // Save phone digits
+      const digits = (otpPhone || "").replace(/\D/g, "").slice(-10);
+      localStorage.setItem("customer_phone", digits);
+      setCustomerPhone(digits);
+
+      // Save name as well — customerName may have been set earlier via sendOtpToPhone
+      const nameCandidate = (customerName || "").trim();
+      if (nameCandidate) {
+        localStorage.setItem("customer_name", nameCandidate);
+        setCustomerName(nameCandidate);
+      } else {
+        // fallback to phone if no name provided (shouldn't happen because we validated)
+        localStorage.setItem("customer_name", `+91${digits}`);
+        setCustomerName(`+91${digits}`);
+      }
+
+      // Clear auth UI
+      setAuthModalOpen(false);
+      setOtpSent(false);
+      setOtpCode("");
+      setAuthMsg("Logged in");
+    } catch (e) {
+      console.error("verifyOtp error", e);
+      setAuthMsg("Verify failed: " + (e.message || e));
     }
-    const data = await res.json(); // { token, userId }
-    if (!data.token) throw new Error("No token returned");
-
-    // Save token and canonical customer info
-    localStorage.setItem("customer_token", data.token);
-    setCustomerToken(data.token);
-
-    // Save phone digits
-    const digits = (otpPhone || "").replace(/\D/g, "").slice(-10);
-    localStorage.setItem("customer_phone", digits);
-    setCustomerPhone(digits);
-
-    // Save name as well — customerName may have been set earlier via sendOtpToPhone
-    const nameCandidate = (customerName || "").trim();
-    if (nameCandidate) {
-      localStorage.setItem("customer_name", nameCandidate);
-      setCustomerName(nameCandidate);
-    } else {
-      // fallback to phone if no name provided (shouldn't happen because we validated)
-      localStorage.setItem("customer_name", `+91${digits}`);
-      setCustomerName(`+91${digits}`);
-    }
-
-    // Clear auth UI
-    setAuthModalOpen(false);
-    setOtpSent(false);
-    setOtpCode("");
-    setAuthMsg("Logged in");
-  } catch (e) {
-    console.error("verifyOtp error", e);
-    setAuthMsg("Verify failed: " + (e.message || e));
   }
-}
-
 
   function logoutCustomer() {
     localStorage.removeItem("customer_token");
@@ -374,6 +370,7 @@ async function verifyOtpAndLogin() {
     return <button onClick={() => setAuthModalOpen(true)} className="px-3 py-1 bg-blue-600 text-white rounded">Login</button>;
   }
 
+  // Render
   return (
     <div className="min-h-screen p-6 bg-gray-50">
       <div className="max-w-5xl mx-auto bg-white p-6 rounded shadow">
@@ -437,58 +434,57 @@ async function verifyOtpAndLogin() {
         </div>
 
         {/* Auth modal */}
-{authModalOpen && (
-  <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-    <div className="bg-white p-4 rounded w-[420px]">
-      <h3 className="font-semibold mb-2">Login / Verify by OTP</h3>
+        {authModalOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+            <div className="bg-white p-4 rounded w-[420px]">
+              <h3 className="font-semibold mb-2">Login / Verify by OTP</h3>
 
-      {!otpSent ? (
-        <>
-          <div className="text-sm text-gray-600 mb-2">Enter your name and phone to receive OTP</div>
+              {!otpSent ? (
+                <>
+                  <div className="text-sm text-gray-600 mb-2">Enter your name and phone to receive OTP</div>
 
-          <div className="mb-2">
-            <label className="text-sm block mb-1">Name</label>
-            <input
-              value={customerName}
-              onChange={(e) => setCustomerName(e.target.value)}
-              placeholder="Your full name"
-              className="p-2 border rounded w-full"
-            />
-          </div>
+                  <div className="mb-2">
+                    <label className="text-sm block mb-1">Name</label>
+                    <input
+                      value={customerName}
+                      onChange={(e) => setCustomerName(e.target.value)}
+                      placeholder="Your full name"
+                      className="p-2 border rounded w-full"
+                    />
+                  </div>
 
-          <div className="flex gap-2 items-center mb-3">
-            <span className="px-3 py-2 bg-gray-100 select-none">+91</span>
-            <input
-              value={otpDigitsInput || customerPhone}
-              onChange={(e) => setOtpDigitsInput(e.target.value.replace(/\D/g, "").slice(0, 10))}
-              placeholder="10-digit phone"
-              className="p-2 border rounded flex-1"
-            />
-          </div>
+                  <div className="flex gap-2 items-center mb-3">
+                    <span className="px-3 py-2 bg-gray-100 select-none">+91</span>
+                    <input
+                      value={otpDigitsInput || customerPhone}
+                      onChange={(e) => setOtpDigitsInput(e.target.value.replace(/\D/g, "").slice(0, 10))}
+                      placeholder="10-digit phone"
+                      className="p-2 border rounded flex-1"
+                    />
+                  </div>
 
-          <div className="mt-3 flex justify-end gap-2">
-            <button onClick={() => { setAuthModalOpen(false); setAuthMsg(""); setOtpDigitsInput(""); }} className="px-3 py-1 bg-gray-200 rounded">Cancel</button>
-            <button onClick={() => sendOtpToPhone(otpDigitsInput || customerPhone, customerName)} className="px-3 py-1 bg-blue-600 text-white rounded">Send OTP</button>
-          </div>
-        </>
-      ) : (
-        <>
-          <div className="text-sm text-gray-600 mb-2">Enter the 6-digit OTP sent to {otpPhone}</div>
-          <input value={otpCode} onChange={e => setOtpCode(e.target.value.replace(/\D/g,'').slice(0,6))} placeholder="OTP" className="p-2 border rounded w-full mb-3" />
-          <div className="flex justify-between items-center">
-            <div className="text-sm text-gray-600">{authMsg}</div>
-            <div className="flex gap-2">
-              <button onClick={() => { setOtpSent(false); setOtpCode(""); setAuthMsg(""); }} className="px-3 py-1 bg-gray-200 rounded">Back</button>
-              <button onClick={verifyOtpAndLogin} className="px-3 py-1 bg-green-600 text-white rounded">Verify & Login</button>
+                  <div className="mt-3 flex justify-end gap-2">
+                    <button onClick={() => { setAuthModalOpen(false); setAuthMsg(""); setOtpDigitsInput(""); }} className="px-3 py-1 bg-gray-200 rounded">Cancel</button>
+                    <button onClick={() => sendOtpToPhone(otpDigitsInput || customerPhone, customerName)} className="px-3 py-1 bg-blue-600 text-white rounded">Send OTP</button>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="text-sm text-gray-600 mb-2">Enter the 6-digit OTP sent to {otpPhone}</div>
+                  <input value={otpCode} onChange={e => setOtpCode(e.target.value.replace(/\D/g,'').slice(0,6))} placeholder="OTP" className="p-2 border rounded w-full mb-3" />
+                  <div className="flex justify-between items-center">
+                    <div className="text-sm text-gray-600">{authMsg}</div>
+                    <div className="flex gap-2">
+                      <button onClick={() => { setOtpSent(false); setOtpCode(""); setAuthMsg(""); }} className="px-3 py-1 bg-gray-200 rounded">Back</button>
+                      <button onClick={verifyOtpAndLogin} className="px-3 py-1 bg-green-600 text-white rounded">Verify & Login</button>
+                    </div>
+                  </div>
+                </>
+              )}
+              {authMsg && <div className="mt-3 text-sm text-red-600">{authMsg}</div>}
             </div>
           </div>
-        </>
-      )}
-      {authMsg && <div className="mt-3 text-sm text-red-600">{authMsg}</div>}
-    </div>
-  </div>
-)}
-
+        )}
 
         {/* Address modal */}
         {addressModalOpen && (
@@ -567,20 +563,18 @@ async function verifyOtpAndLogin() {
             )}
 
             {/* Cart component (right column) */}
-<div className="mt-4">
-  <Cart
-    items={cartItemsArray()}
-    totalQty={totalQty}
-    totalPrice={totalPrice}
-    onIncrement={(id) => increment(id)}
-    onDecrement={(id) => decrement(id)}
-    onRemove={(id) => setQty(id, 0)}
-    onPlaceOrder={() => placeOrder(setInlinePhoneError)}
-    disabled={selectedShop ? !selectedShop.online : true}
-  />
-</div>
-
-
+            <div className="mt-4">
+              <Cart
+                items={cartItemsArray()}
+                totalQty={cartSummary().totalQty}
+                totalPrice={cartSummary().totalPrice}
+                onIncrement={(id) => increment(id)}
+                onDecrement={(id) => decrement(id)}
+                onRemove={(id) => setQty(id, 0)}
+                onPlaceOrder={() => setCartModalOpen(true)}
+                disabled={selectedShop ? !selectedShop.online : true}
+              />
+            </div>
           </div>
         </div>
       </div>
@@ -588,6 +582,7 @@ async function verifyOtpAndLogin() {
       {/* Cart modal */}
       {cartModalOpen && (
         <Cart
+          modal
           onClose={() => setCartModalOpen(false)}
           items={cartSummary().items}
           total={cartSummary().totalPrice}
@@ -609,4 +604,4 @@ async function verifyOtpAndLogin() {
       )}
     </div>
   );
-
+}
