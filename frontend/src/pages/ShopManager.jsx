@@ -1,7 +1,6 @@
 // frontend/src/pages/ShopManager.jsx
 import React, { useEffect, useState } from "react";
 import { getApiBase } from "../hooks/useApi";
-import Cart from "../components/Cart";
 import { useNavigate } from "react-router-dom";
 import Cart from "../components/Cart";
 import ProfileMenu from "../components/ProfileMenu"; // if you use it; optional
