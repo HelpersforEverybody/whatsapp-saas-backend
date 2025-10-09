@@ -5,7 +5,7 @@ import { Home, Briefcase, MapPin, Plus, Edit, Trash2, Star } from "lucide-react"
 
 const API_BASE = getApiBase();
 
-export default function ProfileMenu({ name = "", phone = "", onLogout = () => {}, onOpenAddressModal = () => {} }) {
+export default function ProfileMenu({ name = "", phone = "", onLogout = () => {} }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [manageOpen, setManageOpen] = useState(false);
 
@@ -53,7 +53,7 @@ export default function ProfileMenu({ name = "", phone = "", onLogout = () => {}
       )}
 
       {/* Manage Addresses Modal */}
-      {manageOpen && <ManageAddresses onClose={() => setManageOpen(false)} onOpenAddressModal={onOpenAddressModal} />}
+      {manageOpen && <ManageAddresses onClose={() => setManageOpen(false)} />}
     </div>
   );
 }
@@ -61,7 +61,7 @@ export default function ProfileMenu({ name = "", phone = "", onLogout = () => {}
 // ----------------------
 // Manage Addresses Modal
 // ----------------------
-function ManageAddresses({ onClose, onOpenAddressModal }) {
+function ManageAddresses({ onClose }) {
   const [addresses, setAddresses] = useState([]);
   const [loading, setLoading] = useState(true);
   const [addEditOpen, setAddEditOpen] = useState(false);
@@ -70,7 +70,6 @@ function ManageAddresses({ onClose, onOpenAddressModal }) {
 
   useEffect(() => {
     loadAddresses();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   async function loadAddresses() {
@@ -79,40 +78,25 @@ function ManageAddresses({ onClose, onOpenAddressModal }) {
       const res = await fetch(`${API_BASE}/api/customers/addresses`, {
         headers: { Authorization: `Bearer ${token}` },
       });
-      if (!res.ok) {
-        console.error("Failed loading addresses", await res.text());
-        setAddresses([]);
-      } else {
-        const data = await res.json();
-        setAddresses(Array.isArray(data) ? data : []);
-      }
+      const data = await res.json();
+      setAddresses(Array.isArray(data) ? data : []);
     } catch (e) {
       console.error("load addresses error", e);
-      setAddresses([]);
     } finally {
       setLoading(false);
     }
   }
 
   async function setDefault(addrId) {
-    try {
-      const res = await fetch(`${API_BASE}/api/customers/addresses/${addrId}`, {
-        method: "PATCH",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({ isDefault: true }),
-      });
-      if (!res.ok) {
-        const txt = await res.text();
-        throw new Error(txt || "failed");
-      }
-      await loadAddresses();
-    } catch (e) {
-      console.error("setDefault error", e);
-      alert("Failed to set default address");
-    }
+    await fetch(`${API_BASE}/api/customers/addresses/${addrId}`, {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ isDefault: true }),
+    });
+    loadAddresses();
   }
 
   async function deleteAddr(addrId, isDefault) {
@@ -120,34 +104,22 @@ function ManageAddresses({ onClose, onOpenAddressModal }) {
       alert("Cannot delete default address. Set another address as default first.");
       return;
     }
-    if (!window.confirm("Delete this address?")) return;
-    try {
-      const res = await fetch(`${API_BASE}/api/customers/addresses/${addrId}`, {
-        method: "DELETE",
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!res.ok) {
-        const txt = await res.text();
-        throw new Error(txt || "failed");
-      }
-      await loadAddresses();
-    } catch (e) {
-      console.error("deleteAddr error", e);
-      alert("Failed to delete address");
-    }
+    if (!confirm("Delete this address?")) return;
+    await fetch(`${API_BASE}/api/customers/addresses/${addrId}`, {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    loadAddresses();
   }
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center">
-      <div className="bg-white rounded-lg shadow-lg w-[560px] max-h-[80vh] overflow-auto p-5 relative">
+    <div className="fixed inset-0 z-[9999] bg-black/40 flex items-center justify-center">
+      <div className="bg-white rounded-lg shadow-lg w-[500px] max-h-[80vh] overflow-auto p-5 relative">
         <div className="flex justify-between items-center mb-4">
           <h2 className="text-lg font-semibold">Addresses</h2>
           <div className="flex gap-2">
             <button
-              onClick={() => {
-                setEditData(null);
-                setAddEditOpen(true);
-              }}
+              onClick={() => setAddEditOpen(true)}
               className="flex items-center gap-1 px-3 py-1.5 bg-blue-600 text-white rounded text-sm"
             >
               <Plus size={16} /> Add New
@@ -170,7 +142,9 @@ function ManageAddresses({ onClose, onOpenAddressModal }) {
             {addresses.map((a) => (
               <div
                 key={a._id}
-                className={`p-3 border rounded-lg ${a.isDefault ? "border-blue-400 bg-blue-50" : "border-gray-200"}`}
+                className={`p-3 border rounded-lg ${
+                  a.isDefault ? "border-blue-400 bg-blue-50" : "border-gray-200"
+                }`}
               >
                 <div className="flex justify-between items-start">
                   <div>
@@ -184,14 +158,14 @@ function ManageAddresses({ onClose, onOpenAddressModal }) {
                       )}
                       {a.label || "Home"}{" "}
                       {a.isDefault && (
-                        <span className="text-xs text-blue-600 flex items-center gap-1 ml-2">
+                        <span className="text-xs text-blue-600 flex items-center gap-1">
                           <Star size={12} /> Default
                         </span>
                       )}
                     </div>
                     <div className="text-sm mt-1">{a.address}</div>
                     <div className="text-xs text-gray-600 mt-1">
-                      {a.name || ""} • {a.phone || ""} • {a.pincode || ""}
+                      {a.name} • {normalizePhone(a.phone)} • {a.pincode}
                     </div>
                   </div>
 
@@ -234,13 +208,7 @@ function ManageAddresses({ onClose, onOpenAddressModal }) {
             setEditData(null);
           }}
           editData={editData}
-          onSaved={async () => {
-            await loadAddresses();
-            // If user added a new address and caller wants to open the cart address picker, the parent can do so via prop.
-            if (typeof onOpenAddressModal === "function") {
-              // no-op here; parent can optionally pass a handler
-            }
-          }}
+          onSaved={loadAddresses}
         />
       )}
     </div>
@@ -251,98 +219,79 @@ function ManageAddresses({ onClose, onOpenAddressModal }) {
 // Add / Edit Address Modal
 // ----------------------
 function AddEditAddressModal({ onClose, editData, onSaved }) {
+  // strip +91 if present in edit data before populating
+  const stripPhone = (p) => String(p || "").replace(/\D/g, "").slice(-10);
+
   const [form, setForm] = useState(
-    editData || { label: "Home", name: "", phone: "", address: "", pincode: "" }
+    editData
+      ? { ...editData, phone: stripPhone(editData.phone) }
+      : { label: "Home", name: "", phone: "", address: "", pincode: "" }
   );
+
   const token = localStorage.getItem("customer_token") || "";
   const isEdit = !!editData;
-  const [saving, setSaving] = useState(false);
-
-  useEffect(() => {
-    setForm(editData || { label: "Home", name: "", phone: "", address: "", pincode: "" });
-  }, [editData]);
-
-  function setPhoneDigits(v) {
-    // keep only digits, max 10
-    const digits = String(v || "").replace(/\D/g, "").slice(0, 10);
-    setForm((f) => ({ ...f, phone: digits }));
-  }
-
-  function validateForm() {
-    if (!form.name || String(form.name).trim().length < 2) return "Receiver name required";
-    const digits = String(form.phone || "").replace(/\D/g, "");
-    if (digits.length !== 10) return "Phone must be 10 digits";
-    if (!form.address || String(form.address).trim().length < 5) return "Complete address required";
-    if (!/^\d{6}$/.test(String(form.pincode || "").trim())) return "Pincode must be 6 digits";
-    return null;
-  }
 
   async function handleSave() {
-    const err = validateForm();
-    if (err) {
-      alert(err);
+    if (!form.name || !form.address || !form.pincode) {
+      alert("Please fill all required fields.");
       return;
     }
-    setSaving(true);
 
-    // Normalize phone to +91XXXXXXXXXX for server
-    const phoneNorm = String(form.phone).replace(/\D/g, "");
-    const payload = {
-      label: form.label || "Home",
-      name: String(form.name || "").trim(),
-      phone: phoneNorm ? `+91${phoneNorm}` : "",
-      address: String(form.address || "").trim(),
-      pincode: String(form.pincode || "").trim(),
+    // always store +91 prefixed number (backend expects full)
+    const digits = form.phone.replace(/\D/g, "").slice(-10);
+    const phone = digits ? `+91${digits}` : "";
+
+    const body = {
+      label: form.label,
+      name: form.name,
+      phone,
+      address: form.address,
+      pincode: form.pincode,
     };
 
-    try {
-      const url = isEdit
-        ? `${API_BASE}/api/customers/addresses/${editData._id}`
-        : `${API_BASE}/api/customers/addresses`;
-      const method = isEdit ? "PATCH" : "POST";
+    const url = isEdit
+      ? `${API_BASE}/api/customers/addresses/${editData._id}`
+      : `${API_BASE}/api/customers/addresses`;
+    const method = isEdit ? "PATCH" : "POST";
 
-      const res = await fetch(url, {
-        method,
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify(payload),
-      });
+    const res = await fetch(url, {
+      method,
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify(body),
+    });
 
-      if (!res.ok) {
-        const txt = await res.text();
-        console.error("save address failed", txt);
-        alert("Error saving address: " + txt);
-        setSaving(false);
-        return;
-      }
-
-      await onSaved?.();
-      onClose();
-    } catch (e) {
-      console.error("handleSave error", e);
-      alert("Error saving address");
-    } finally {
-      setSaving(false);
+    if (!res.ok) {
+      alert("Error saving address.");
+      return;
     }
+
+    onSaved();
+    onClose();
   }
 
-  // center modal with high z-index so it overlays cart
   return (
-    <div className="fixed inset-0 z-70 bg-black/40 flex items-center justify-center">
-      <div className="bg-white rounded-lg shadow-lg w-[520px] p-6">
-        <div className="flex justify-between items-center mb-4">
-          <h3 className="text-lg font-semibold">{isEdit ? "Edit Address" : "Add New Address"}</h3>
-          <button onClick={onClose} className="text-gray-600">✕</button>
+    <div className="fixed inset-0 z-[10001] bg-black/40 flex items-end justify-center">
+      <div className="bg-white rounded-t-2xl w-full max-w-[500px] p-5 shadow-lg z-[10002]">
+        <div className="flex justify-between items-center mb-3">
+          <h3 className="text-lg font-semibold">
+            {isEdit ? "Edit Address" : "Add New Address"}
+          </h3>
+          <button onClick={onClose} className="text-gray-600">
+            ✕
+          </button>
         </div>
 
-        <div className="flex gap-2 mb-4">
+        <div className="flex gap-2 mb-3">
           {["Home", "Office", "Other"].map((t) => (
             <button
               key={t}
               onClick={() => setForm({ ...form, label: t })}
-              className={`flex items-center gap-1 px-3 py-1 border rounded-full text-sm ${form.label === t ? "bg-blue-100 border-blue-400" : "border-gray-200"}`}
+              className={`flex items-center gap-1 px-3 py-1 border rounded-full text-sm ${
+                form.label === t ? "bg-blue-100 border-blue-400" : "border-gray-200"
+              }`}
             >
               {t === "Home" && <Home size={14} />}
               {t === "Office" && <Briefcase size={14} />}
@@ -362,30 +311,51 @@ function AddEditAddressModal({ onClose, editData, onSaved }) {
           <input
             placeholder="Phone (10 digits)"
             value={form.phone}
-            onChange={(e) => setPhoneDigits(e.target.value)}
+            onChange={(e) =>
+              setForm({
+                ...form,
+                phone: e.target.value.replace(/\D/g, "").slice(0, 10),
+              })
+            }
             className="border rounded w-full p-2"
           />
           <textarea
             placeholder="Complete address *"
             value={form.address}
             onChange={(e) => setForm({ ...form, address: e.target.value })}
-            className="border rounded w-full p-2 h-24"
+            className="border rounded w-full p-2 h-20"
           />
           <input
             placeholder="Pincode *"
             value={form.pincode}
-            onChange={(e) => setForm({ ...form, pincode: e.target.value.replace(/\D/g, "").slice(0, 6) })}
+            onChange={(e) =>
+              setForm({
+                ...form,
+                pincode: e.target.value.replace(/\D/g, "").slice(0, 6),
+              })
+            }
             className="border rounded w-full p-2"
           />
         </div>
 
-        <div className="mt-4 flex gap-2">
-          <button onClick={onClose} className="px-4 py-2 border rounded">Cancel</button>
-          <button onClick={handleSave} disabled={saving} className="ml-auto bg-blue-600 text-white px-4 py-2 rounded">
-            {saving ? "Saving..." : "Save Address"}
-          </button>
-        </div>
+        <button
+          onClick={handleSave}
+          className="mt-4 w-full bg-blue-600 text-white py-2 rounded font-medium"
+        >
+          Save Address
+        </button>
       </div>
     </div>
   );
+}
+
+// ----------------------
+// Helpers
+// ----------------------
+function normalizePhone(p) {
+  if (!p) return "";
+  const digits = String(p).replace(/\D/g, "");
+  if (digits.length === 10) return `+91${digits}`;
+  if (p.startsWith("+")) return p;
+  return p;
 }
