@@ -583,7 +583,19 @@ export default function ShopManager() {
                   <div className="text-sm text-gray-800">Total: <b>₹{totalPrice}</b></div>
                 </div>
                 <div className="flex items-center gap-2">
-                  <button onClick={() => setCartModalOpen(true)} className="px-4 py-2 bg-green-600 text-white rounded">Open Cart</button>
+                  <button
+  onClick={async () => {
+    // if logged in, refresh addresses right before opening the cart modal
+    if (localStorage.getItem('customer_token')) {
+      await fetchCustomerAddresses().catch(err => console.error('addr fetch before cart open failed', err));
+    }
+    setCartModalOpen(true);
+  }}
+  className="px-4 py-2 bg-green-600 text-white rounded"
+>
+  Open Cart
+</button>
+
                 </div>
               </div>
             </div>
