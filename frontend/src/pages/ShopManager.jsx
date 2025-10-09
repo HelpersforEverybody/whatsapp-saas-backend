@@ -503,28 +503,7 @@ export default function ShopManager() {
           </div>
         )}
 
-        {/* Address modal */}
-        {addressModalOpen && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-            <div className="bg-white p-4 rounded w-[480px]">
-              <h3 className="font-semibold mb-2">Save Delivery Address</h3>
-              <div className="grid grid-cols-1 gap-2">
-                <input value={addressForm.name} onChange={e => setAddressForm(f => ({ ...f, name: e.target.value }))} placeholder="Name" className="p-2 border rounded" />
-                <div className="flex">
-                  <span className="px-3 py-2 bg-gray-100 select-none">+91</span>
-                  <input value={addressForm.phone} onChange={e => setAddressForm(f=>({...f,phone: e.target.value.replace(/\D/g,'').slice(0,10)}))} placeholder="10-digit phone" className="p-2 border rounded flex-1" />
-                </div>
-                <textarea value={addressForm.address} onChange={e => setAddressForm(f => ({ ...f, address: e.target.value }))} placeholder="Address" className="p-2 border rounded h-24" />
-                <input value={addressForm.pincode} onChange={e => setAddressForm(f => ({ ...f, pincode: e.target.value.replace(/\D/g,'').slice(0,6) }))} placeholder="Pincode (6 digits)" className="p-2 border rounded" />
-              </div>
-              <div className="mt-3 flex justify-end gap-2">
-                <button onClick={() => { setAddressModalOpen(false); setAddressMsg(""); }} className="px-3 py-1 bg-gray-200 rounded">Cancel</button>
-                <button onClick={() => addOrUpdateAddress(null)} className="px-3 py-1 bg-blue-600 text-white rounded">Save</button>
-              </div>
-              {addressMsg && <div className="mt-2 text-sm text-red-600">{addressMsg}</div>}
-            </div>
-          </div>
-        )}
+
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <div className="col-span-1">
