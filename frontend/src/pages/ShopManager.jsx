@@ -753,7 +753,8 @@ export default function ShopManager() {
     </div>
   );
 
-  return createPortal(modal, portalTarget || document.body);
+  return createPortal(modal, document.body);
+
 })()}
 
     </div>
