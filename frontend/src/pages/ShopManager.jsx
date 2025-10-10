@@ -684,20 +684,33 @@ export default function ShopManager() {
 
       {/* Address Add/Edit portal modal: if the cart portal exists mount inside it (absolute),
           otherwise fallback to document.body (fixed). */}
+           {/* Address Add/Edit portal modal: if the cart portal exists mount inside it (absolute),
+          otherwise fallback to document.body (fixed). */}
       {addressModalOpen && (() => {
+        // detect the portal target (created inside Cart.jsx)
         const portalTarget = (typeof document !== "undefined") ? document.getElementById("cart-address-portal") : null;
         const isInCart = !!portalTarget;
 
+        // When inside cart: absolute overlay inside cart container and high z-index
+        // When not in cart: fallback to full-screen fixed modal
         const overlayClass = isInCart
-          ? "absolute inset-0 z-[10020] bg-black/40 flex items-center justify-center"
-          : "fixed inset-0 z-50 bg-black/40 flex items-end justify-center";
+          ? "absolute inset-0 z-[10030] flex items-center justify-center"
+          : "fixed inset-0 z-50 flex items-end justify-center";
+
+        const backdropClass = isInCart ? "absolute inset-0 bg-black/40" : "absolute inset-0 bg-black/40";
+
+        const modalStyle = isInCart
+          ? { position: "relative", transform: "none" }   // rendered inside cart, relative positioning is fine
+          : { transform: "none" };                        // rendered on body, default styling
 
         const modal = (
           <div className={overlayClass} onClick={() => { setAddressModalOpen(false); setAddressEditIndex(null); }}>
+            {/* only the backdrop should close on click; the inner modal stops propagation */}
+            <div className={backdropClass} />
             <div
-              className={`bg-white rounded-t-2xl w-full max-w-[520px] p-5 shadow-lg pointer-events-auto`}
+              className="relative bg-white rounded-t-2xl w-full max-w-[520px] p-5 shadow-lg pointer-events-auto z-[10040]"
               onClick={(e) => e.stopPropagation()}
-              style={{ transform: "none", position: isInCart ? "relative" : "static" }}
+              style={modalStyle}
             >
               <div className="flex justify-between items-center mb-3">
                 <h3 className="text-lg font-semibold">{typeof addressEditIndex === "number" ? "Edit Address" : "Add New Address"}</h3>
