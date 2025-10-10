@@ -638,28 +638,50 @@ export default function ShopManager() {
 
       {/* Cart modal (confirm & place order) */}
       {cartModalOpen && (
-        <Cart
-          items={cartSummary().items}
-          totalQty={cartSummary().totalQty}
-          totalPrice={cartSummary().totalPrice}
-          addresses={addresses}
-          onAddAddress={() => openAddAddressModal(null)}
-          onEditAddress={(idx) => openAddAddressModal(idx)}
-          onDeleteAddress={(idx) => { if (!window.confirm("Delete this address?")) return; deleteAddress(idx); }}
-          onClose={() => setCartModalOpen(false)}
-          onConfirm={async (addressIdx) => {
-            const chosen = addresses[addressIdx];
-            if (!chosen) { alert("Select or add address first"); return; }
-            const result = await placeOrderFinal(chosen);
-            if (result.ok) {
-              alert("Order placed successfully");
-              setCartModalOpen(false);
-            } else {
-              alert("Order failed: " + (result.message || "unknown"));
-            }
-          }}
-        />
-      )}
+        // inside ShopManager render: where you render <Cart ... />
+<Cart
+  items={cartSummary().items}
+  totalQty={cartSummary().totalQty}
+  totalPrice={cartSummary().totalPrice}
+  addresses={addresses}
+  onAddAddress={() => openAddAddressModal(null)}
+  onEditAddress={(idx) => openAddAddressModal(idx)}
+  onDeleteAddress={(idx) => { if (!window.confirm("Delete this address?")) return; deleteAddress(idx); }}
+  onSetDefault={async (addrId) => {
+    // set isDefault true on server (same as ProfileMenu)
+    try {
+      const token = localStorage.getItem("customer_token");
+      if (!token) throw new Error("Not logged in");
+      const res = await fetch(`${API_BASE}/api/customers/addresses/${addrId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ isDefault: true })
+      });
+      if (!res.ok) {
+        const txt = await res.text();
+        throw new Error(txt || "Failed to set default");
+      }
+      // reload addresses after change
+      await fetchCustomerAddresses();
+    } catch (e) {
+      console.error("setDefaultAddress error", e);
+      alert("Set default failed: " + (e.message || e));
+    }
+  }}
+  onClose={() => setCartModalOpen(false)}
+  onConfirm={async (addressIdx) => {
+    const chosen = addresses[addressIdx];
+    if (!chosen) { alert("Select or add address first"); return; }
+    const result = await placeOrderFinal(chosen);
+    if (result.ok) {
+      alert("Order placed successfully");
+      setCartModalOpen(false);
+    } else {
+      alert("Order failed: " + (result.message || "unknown"));
+    }
+  }}
+/>
+
 
       {/* Address Add/Edit portal modal: if the cart portal exists mount inside it (absolute),
           otherwise fallback to document.body (fixed). */}
