@@ -63,7 +63,8 @@ export default function Cart({
   return (
     <div className="fixed inset-0 z-[9999] flex items-center justify-center">
       <div className="absolute inset-0 bg-black/40" onClick={onClose} />
-      <div className="relative bg-white rounded-lg w-[90%] max-w-2xl p-4 shadow-lg z-[10000]">
+      <div className="relative bg-white rounded-lg w-[90%] max-w-2xl p-4 shadow-lg z-[10000]" id="cart-modal-container">
+        <div id="cart-address-portal" className="absolute inset-0 z-[10010] pointer-events-none" />
         <div className="flex items-center justify-between mb-4">
           <h3 className="text-lg font-semibold">Cart — {items.length} {items.length === 1 ? "item" : "items"}</h3>
           <button className="px-3 py-1 bg-gray-100 rounded" onClick={onClose}>Close</button>
