@@ -792,10 +792,6 @@ export default function ShopManager() {
   return createPortal(modal, document.body);
 
 })()}
-
-    </div>
-  );
-}
 <OrderHistory
   open={orderHistoryOpen}
   onClose={() => setOrderHistoryOpen(false)}
@@ -816,3 +812,7 @@ export default function ShopManager() {
     setCartModalOpen(true);
   }}
 />
+    </div>
+  );
+}
+
