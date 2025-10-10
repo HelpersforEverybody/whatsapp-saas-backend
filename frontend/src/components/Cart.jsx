@@ -1,5 +1,5 @@
 // frontend/src/components/Cart.jsx
-import React, { useMemo, useState, useEffect } from "react";
+import React, { useEffect, useState } from "react";
 
 /**
  * Props expected:
