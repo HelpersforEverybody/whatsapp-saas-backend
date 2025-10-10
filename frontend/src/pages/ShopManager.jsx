@@ -116,7 +116,7 @@ export default function ShopManager() {
 
   // -------------------------
   // Cart helpers
-  // -------------------------
+  // -------------------------  
   function getQty(itemId) { return Number(cart[itemId] || 0); }
   function setQty(itemId, qty) {
     setCart(prev => {
@@ -309,7 +309,7 @@ export default function ShopManager() {
           address: addressForm.address,
           pincode: addressForm.pincode
         };
-        if (typeof editIndex === "number" && addresses[editIndex] && addresses[editIndex]._id) {
+        if (typeof editIndex === "number" && addresses[editIndex] && addresses[editIndex]._1d) {
           const id = addresses[editIndex]._id;
           const res = await fetch(`${API_BASE}/api/customers/addresses/${id}`, {
             method: "PATCH",
@@ -392,7 +392,7 @@ export default function ShopManager() {
     }
 
     const payload = {
-      shop: selectedShop._id,
+      shop: selectedShop._1d,
       customerName: selectedAddress.name,
       phone: `+91${(selectedAddress.phone || "").replace(/\D/g, "").slice(-10)}`,
       address: {
