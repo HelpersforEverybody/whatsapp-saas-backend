@@ -1,5 +1,6 @@
 // frontend/src/components/ProfileMenu.jsx
 import React, { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { getApiBase } from "../hooks/useApi";
 import { Home, Briefcase, MapPin, Plus, Edit, Trash2, Star } from "lucide-react";
 
@@ -113,8 +114,12 @@ function ManageAddresses({ onClose }) {
   }
 
   return (
+    // Manage addresses container: note the relative wrapper and the internal portal mount point.
     <div className="fixed inset-0 z-[9999] bg-black/40 flex items-center justify-center">
       <div className="bg-white rounded-lg shadow-lg w-[500px] max-h-[80vh] overflow-auto p-5 relative">
+        {/* Portal mount point for Add/Edit modal when opened from this ManageAddresses component */}
+        <div id="profile-address-portal" />
+
         <div className="flex justify-between items-center mb-4">
           <h2 className="text-lg font-semibold">Addresses</h2>
           <div className="flex gap-2">
@@ -201,11 +206,15 @@ function ManageAddresses({ onClose }) {
         )}
       </div>
 
+      {/* Render Add/Edit modal via portal; if #profile-address-portal exists, mount there so modal overlays inside the manage box.
+          Otherwise mount to document.body (fallback). */}
       {addEditOpen && (
         <AddEditAddressModal
           onClose={() => {
             setAddEditOpen(false);
             setEditData(null);
+            // reload after close to reflect updates
+            loadAddresses();
           }}
           editData={editData}
           onSaved={loadAddresses}
@@ -238,7 +247,7 @@ function AddEditAddressModal({ onClose, editData, onSaved }) {
     }
 
     // always store +91 prefixed number (backend expects full)
-    const digits = form.phone.replace(/\D/g, "").slice(-10);
+    const digits = (form.phone || "").replace(/\D/g, "").slice(-10);
     const phone = digits ? `+91${digits}` : "";
 
     const body = {
@@ -272,16 +281,24 @@ function AddEditAddressModal({ onClose, editData, onSaved }) {
     onClose();
   }
 
-  return (
-    <div className="fixed inset-0 z-[10001] bg-black/40 flex items-end justify-center">
-      <div className="bg-white rounded-t-2xl w-full max-w-[500px] p-5 shadow-lg z-[10002]">
+  // Determine portal target: prefer profile-address-portal (inside ManageAddresses), otherwise document.body
+  const portalTarget = (typeof document !== "undefined") ? document.getElementById("profile-address-portal") : null;
+  const isInProfilePortal = !!portalTarget;
+
+  const modal = (
+    // overlay: absolute when inside manage box so it sits within the modal; fixed when fallbacking to body.
+    <div
+      className={`${isInProfilePortal ? "absolute inset-0 z-[10001] flex items-center justify-center" : "fixed inset-0 z-[10001] bg-black/40 flex items-end justify-center"}`}
+      onClick={() => { onClose(); }}
+      style={isInProfilePortal ? { background: "rgba(0,0,0,0.25)" } : undefined}
+    >
+      <div
+        className={`bg-white rounded-t-2xl w-full max-w-[500px] p-5 shadow-lg ${isInProfilePortal ? "relative" : ""}`}
+        onClick={(e) => e.stopPropagation()}
+      >
         <div className="flex justify-between items-center mb-3">
-          <h3 className="text-lg font-semibold">
-            {isEdit ? "Edit Address" : "Add New Address"}
-          </h3>
-          <button onClick={onClose} className="text-gray-600">
-            ✕
-          </button>
+          <h3 className="text-lg font-semibold">{isEdit ? "Edit Address" : "Add New Address"}</h3>
+          <button onClick={onClose} className="text-gray-600">✕</button>
         </div>
 
         <div className="flex gap-2 mb-3">
@@ -289,9 +306,7 @@ function AddEditAddressModal({ onClose, editData, onSaved }) {
             <button
               key={t}
               onClick={() => setForm({ ...form, label: t })}
-              className={`flex items-center gap-1 px-3 py-1 border rounded-full text-sm ${
-                form.label === t ? "bg-blue-100 border-blue-400" : "border-gray-200"
-              }`}
+              className={`flex items-center gap-1 px-3 py-1 border rounded-full text-sm ${form.label === t ? "bg-blue-100 border-blue-400" : "border-gray-200"}`}
             >
               {t === "Home" && <Home size={14} />}
               {t === "Office" && <Briefcase size={14} />}
@@ -347,6 +362,8 @@ function AddEditAddressModal({ onClose, editData, onSaved }) {
       </div>
     </div>
   );
+
+  return createPortal(modal, portalTarget || document.body);
 }
 
 // ----------------------
