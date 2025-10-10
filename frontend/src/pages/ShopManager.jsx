@@ -689,9 +689,9 @@ export default function ShopManager() {
   const isInCart = !!portalTarget;
 
   // overlay and modal z-indexes must be above the cart manage panel z
-  const overlayClass = isInCart
-    ? "absolute inset-0 z-[10040] flex items-center justify-center"
-    : "fixed inset-0 z-50 flex items-end justify-center";
+ const overlayClass = isInCart
+  ? "fixed inset-0 z-[10040] flex items-center justify-center"
+  : "fixed inset-0 z-50 flex items-end justify-center";
 
   const backdropClass = "absolute inset-0 bg-black/40";
 
