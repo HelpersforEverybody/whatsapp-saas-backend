@@ -147,18 +147,19 @@ export default function ShopManager() {
     return { totalQty, totalPrice, items };
   }
   function handleReorder(order) {
-  // Basic example: replace cart with the items from order
-  // adapt if you want to merge instead of replace
+  // attempt to update prices from selectedShop/menu if order.shop matches current selected
+  // fallback: directly restore old order prices into cart.
   const newCart = {};
   (order.items || []).forEach(it => {
-    // you might have item._id in order items — if not, use name keyed approach
-    // here we use name fallback — change as needed
-    const key = it._id || it.name || String(Math.random());
+    // keying by itemId if present, else by name
+    const key = it.itemId || it._id || it.name;
     newCart[key] = (newCart[key] || 0) + (it.qty || 1);
   });
   setCart(newCart);
-  // make sure menu is loaded / selectedShop compatible; if needed you can show a notice
+  setOrderHistoryOpen(false);
+  setCartModalOpen(true);
 }
+
 
   // -------------------------
   // Validation helpers
