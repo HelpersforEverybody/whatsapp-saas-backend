@@ -10,6 +10,10 @@ const bcrypt = require('bcryptjs');
 const app = express();
 const server = http.createServer(app);
 const { Server } = require('socket.io');
+// somewhere after express() and middleware
+const ordersRouter = require('./routes/orders');
+app.use('/api', ordersRouter);
+
 
 const io = new Server(server, {
   cors: { origin: '*', methods: ['GET', 'POST', 'PATCH', 'PUT', 'DELETE'] },
