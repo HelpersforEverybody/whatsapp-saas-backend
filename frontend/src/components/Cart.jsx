@@ -62,9 +62,17 @@ export default function Cart({
 
   return (
     <div className="fixed inset-0 z-[9999] flex items-center justify-center">
+      {/* page-level backdrop for the cart */}
       <div className="absolute inset-0 bg-black/40" onClick={onClose} />
+
+      {/* cart container */}
       <div className="relative bg-white rounded-lg w-[90%] max-w-2xl p-4 shadow-lg z-[10000]" id="cart-modal-container">
-        <div id="cart-address-portal" className="absolute inset-0 z-[10010]" />
+
+        {/* PORTAL TARGET: keep it small / relative so it does NOT cover the whole modal.
+            This is where the Add/Edit address modal will be portaled into when you open
+            the address editor from inside the cart. Don't use absolute inset-0 here. */}
+        <div id="cart-address-portal" className="relative z-[10010]" />
+
         <div className="flex items-center justify-between mb-4">
           <h3 className="text-lg font-semibold">Cart — {items.length} {items.length === 1 ? "item" : "items"}</h3>
           <button className="px-3 py-1 bg-gray-100 rounded" onClick={onClose}>Close</button>
@@ -196,7 +204,6 @@ export default function Cart({
                     onClick={() => {
                       // ok: confirm selection and hide manage panel
                       setShowManagePanel(false);
-                      // optionally scroll cart to top or simply keep the selectedIdx
                     }}
                     className="px-4 py-1 bg-blue-600 text-white rounded"
                   >
