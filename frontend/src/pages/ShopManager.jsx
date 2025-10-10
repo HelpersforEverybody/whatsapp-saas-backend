@@ -4,6 +4,7 @@ import { createPortal } from "react-dom";
 import { getApiBase } from "../hooks/useApi";
 import Cart from "../components/Cart";
 import ProfileMenu from "../components/ProfileMenu";
+import OrderHistory from "../components/OrderHistory";
 import { Home, Briefcase, MapPin } from "lucide-react"; // icons used for address labels
 
 const API_BASE = getApiBase();
@@ -15,6 +16,8 @@ export default function ShopManager() {
   const [selectedShop, setSelectedShop] = useState(null);
   const [menu, setMenu] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [orderHistoryOpen, setOrderHistoryOpen] = useState(false);
+
 
   // filter pincode
   const [pincode, setPincode] = useState("");
@@ -143,6 +146,19 @@ export default function ShopManager() {
     const totalPrice = items.reduce((s, i) => s + i.qty * i.price, 0);
     return { totalQty, totalPrice, items };
   }
+  function handleReorder(order) {
+  // Basic example: replace cart with the items from order
+  // adapt if you want to merge instead of replace
+  const newCart = {};
+  (order.items || []).forEach(it => {
+    // you might have item._id in order items — if not, use name keyed approach
+    // here we use name fallback — change as needed
+    const key = it._id || it.name || String(Math.random());
+    newCart[key] = (newCart[key] || 0) + (it.qty || 1);
+  });
+  setCart(newCart);
+  // make sure menu is loaded / selectedShop compatible; if needed you can show a notice
+}
 
   // -------------------------
   // Validation helpers
@@ -430,31 +446,47 @@ export default function ShopManager() {
     }
   }
 
-  // -------------------------
-  // Top-right badge
-  // -------------------------
   function TopRightBadge() {
-    if (customerToken) {
-      const displayName = (customerName && customerName.trim()) ? customerName : `+91${(customerPhone || "").slice(-10)}`;
-      return (
-        <div className="flex items-center gap-3">
-          <ProfileMenu
-            name={displayName}
-            phone={`+91${(customerPhone || "").slice(-10)}`}
-            onLogout={logoutCustomer}
-            addresses={addresses}
-            onOpenAddressModal={() => openAddAddressModal(null)}
-            onManageAddresses={() => setCartModalOpen(true)}
-          />
-        </div>
-      );
-    }
+  // keep My Orders visible regardless of login state OR only for logged-in
+  // in this example we'll show it only when logged in
+  if (customerToken) {
+    const displayName = (customerName && customerName.trim()) ? customerName : `+91${(customerPhone || "").slice(-10)}`;
     return (
-      <div>
-        <button onClick={() => { setAuthMode("login"); setAuthModalOpen(true); }} className="px-3 py-1 bg-blue-600 text-white rounded">Login / Signup</button>
+      <div className="flex items-center gap-3">
+        {/* My Orders button */}
+        <button
+          onClick={() => setOrderHistoryOpen(true)}
+          className="px-3 py-1 bg-gray-100 rounded text-sm"
+        >
+          My Orders
+        </button>
+
+        {/* Profile menu */}
+        <ProfileMenu
+          name={displayName}
+          phone={`+91${(customerPhone || "").slice(-10)}`}
+          onLogout={logoutCustomer}
+          addresses={addresses}
+          onOpenAddressModal={() => openAddAddressModal(null)}
+          onManageAddresses={() => setCartModalOpen(true)}
+        />
       </div>
     );
   }
+
+  // not logged in
+  return (
+    <div>
+      <button
+        onClick={() => { setAuthMode("login"); setAuthModalOpen(true); }}
+        className="px-3 py-1 bg-blue-600 text-white rounded"
+      >
+        Login / Signup
+      </button>
+    </div>
+  );
+}
+
 
   // -------------------------
   // Render
@@ -764,3 +796,13 @@ export default function ShopManager() {
     </div>
   );
 }
+<OrderHistory
+  open={orderHistoryOpen}
+  onClose={() => setOrderHistoryOpen(false)}
+  apiBase={API_BASE}
+  authToken={customerToken}
+  onReorder={(order) => {
+    handleReorder(order);
+    setOrderHistoryOpen(false);
+  }}
+/>
