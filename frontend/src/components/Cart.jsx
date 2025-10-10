@@ -72,8 +72,8 @@ export default function Cart({
             This is where the Add/Edit address modal will be portaled into when you open
             the address editor from inside the cart. Don't use absolute inset-0 here. */}
         {/* portal target — keep this inside the cart container so address modal can portal into it */}
-      <div id="cart-address-portal" className="absolute inset-0 z-[10010] pointer-events-auto" />
-
+      {/* This empty div is just a mount point for modals — DO NOT overlay or block clicks */}
+ <div id="cart-address-portal" className="relative z-[10010]" style={{ pointerEvents: "none" }}></div>
         <div className="flex items-center justify-between mb-4">
           <h3 className="text-lg font-semibold">Cart — {items.length} {items.length === 1 ? "item" : "items"}</h3>
           <button className="px-3 py-1 bg-gray-100 rounded" onClick={onClose}>Close</button>
