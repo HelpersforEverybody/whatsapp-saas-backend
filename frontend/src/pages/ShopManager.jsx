@@ -750,4 +750,8 @@ export default function ShopManager() {
 
   return createPortal(modal, portalTarget || document.body);
 })()}
+          </div>  {/* closes the main wrapper div */}
+  );        {/* closes the return() */}
+}           {/* closes the component function */}
+
 
