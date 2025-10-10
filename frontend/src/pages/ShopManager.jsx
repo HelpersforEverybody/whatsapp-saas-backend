@@ -661,59 +661,70 @@ export default function ShopManager() {
         />
       )}
 
-      {/* Address Add/Edit portal modal: bottom-sheet style like ProfileMenu */}
-      {addressModalOpen && createPortal(
-        <div className="fixed inset-0 z-[9999] bg-black/40 flex items-end justify-center">
-          <div className="bg-white rounded-t-2xl w-full max-w-[520px] p-5 shadow-lg">
-            <div className="flex justify-between items-center mb-3">
-              <h3 className="text-lg font-semibold">{typeof addressEditIndex === "number" ? "Edit Address" : "Add New Address"}</h3>
-              <button onClick={() => { setAddressModalOpen(false); setAddressMsg(""); }} className="text-gray-600">✕</button>
-            </div>
-
-            <div className="flex gap-2 mb-3">
-              {["Home","Office","Other"].map(t => (
-                <button
-                  key={t}
-                  onClick={() => setAddressForm(f => ({ ...f, label: t }))}
-                  className={`flex items-center gap-1 px-3 py-1 border rounded-full text-sm ${addressForm.label === t ? "bg-blue-100 border-blue-400" : "border-gray-200"}`}
-                >
-                  {t === "Home" && <Home size={14} />}
-                  {t === "Office" && <Briefcase size={14} />}
-                  {t === "Other" && <MapPin size={14} />}
-                  {t}
-                </button>
-              ))}
-            </div>
-
-            <div className="space-y-3">
-              <input placeholder="Receiver’s name *" value={addressForm.name} onChange={(e) => setAddressForm(f => ({ ...f, name: e.target.value }))} className="border rounded w-full p-2" />
-
-              <div className="flex items-center border rounded overflow-hidden">
-                <span className="px-3 py-2 bg-gray-100 select-none">+91</span>
-                <input
-                  placeholder="Phone (10 digits)*"
-                  value={addressForm.phone}
-                  onChange={(e) => setAddressForm(f => ({ ...f, phone: e.target.value.replace(/\D/g, "").slice(0,10) }))}
-                  className="p-2 flex-1 outline-none"
-                  maxLength={10}
-                />
+      {/* Address Add/Edit portal modal: if the cart portal exists mount inside it (absolute),
+          otherwise fallback to document.body (fixed). */}
+      {addressModalOpen && (() => {
+        const portalTarget = (typeof document !== "undefined") ? document.getElementById("cart-address-portal") : null;
+        const isInCart = !!portalTarget;
+        const overlayClass = isInCart ? "absolute inset-0 z-50 bg-black/40 flex items-center justify-center" : "fixed inset-0 z-50 bg-black/40 flex items-end justify-center";
+        const modal = (
+          <div className={overlayClass} onClick={() => { /* click outside - close */ setAddressModalOpen(false); setAddressEditIndex(null); }}>
+            <div
+              className={`bg-white rounded-t-2xl w-full max-w-[520px] p-5 shadow-lg ${isInCart ? "relative" : ""}`}
+              onClick={(e) => e.stopPropagation()}
+              style={{ transform: "none" }}
+            >
+              <div className="flex justify-between items-center mb-3">
+                <h3 className="text-lg font-semibold">{typeof addressEditIndex === "number" ? "Edit Address" : "Add New Address"}</h3>
+                <button onClick={() => { setAddressModalOpen(false); setAddressMsg(""); setAddressEditIndex(null); }} className="text-gray-600">✕</button>
               </div>
 
-              <textarea placeholder="Complete address *" value={addressForm.address} onChange={(e) => setAddressForm(f => ({ ...f, address: e.target.value }))} className="border rounded w-full p-2 h-24" />
+              <div className="flex gap-2 mb-3">
+                {["Home","Office","Other"].map(t => (
+                  <button
+                    key={t}
+                    onClick={() => setAddressForm(f => ({ ...f, label: t }))}
+                    className={`flex items-center gap-1 px-3 py-1 border rounded-full text-sm ${addressForm.label === t ? "bg-blue-100 border-blue-400" : "border-gray-200"}`}
+                  >
+                    {t === "Home" && <Home size={14} />}
+                    {t === "Office" && <Briefcase size={14} />}
+                    {t === "Other" && <MapPin size={14} />}
+                    {t}
+                  </button>
+                ))}
+              </div>
 
-              <input placeholder="Pincode *" value={addressForm.pincode} onChange={(e) => setAddressForm(f => ({ ...f, pincode: e.target.value.replace(/\D/g, "").slice(0,6) }))} className="border rounded w-full p-2" maxLength={6} />
+              <div className="space-y-3">
+                <input placeholder="Receiver’s name *" value={addressForm.name} onChange={(e) => setAddressForm(f => ({ ...f, name: e.target.value }))} className="border rounded w-full p-2" />
+
+                <div className="flex items-center border rounded overflow-hidden">
+                  <span className="px-3 py-2 bg-gray-100 select-none">+91</span>
+                  <input
+                    placeholder="Phone (10 digits)*"
+                    value={addressForm.phone}
+                    onChange={(e) => setAddressForm(f => ({ ...f, phone: e.target.value.replace(/\D/g, "").slice(0,10) }))}
+                    className="p-2 flex-1 outline-none"
+                    maxLength={10}
+                  />
+                </div>
+
+                <textarea placeholder="Complete address *" value={addressForm.address} onChange={(e) => setAddressForm(f => ({ ...f, address: e.target.value }))} className="border rounded w-full p-2 h-24" />
+
+                <input placeholder="Pincode *" value={addressForm.pincode} onChange={(e) => setAddressForm(f => ({ ...f, pincode: e.target.value.replace(/\D/g, "").slice(0,6) }))} className="border rounded w-full p-2" maxLength={6} />
+              </div>
+
+              <div className="mt-4 flex justify-end gap-2">
+                <button onClick={() => { setAddressModalOpen(false); setAddressMsg(""); setAddressEditIndex(null); }} className="px-3 py-1 bg-gray-200 rounded">Cancel</button>
+                <button onClick={() => addOrUpdateAddress(addressEditIndex)} className="px-4 py-1 bg-blue-600 text-white rounded">Save Address</button>
+              </div>
+
+              {addressMsg && <div className="mt-3 text-sm text-red-600">{addressMsg}</div>}
             </div>
-
-            <div className="mt-4 flex justify-end gap-2">
-              <button onClick={() => { setAddressModalOpen(false); setAddressMsg(""); }} className="px-3 py-1 bg-gray-200 rounded">Cancel</button>
-              <button onClick={() => addOrUpdateAddress(addressEditIndex)} className="px-4 py-1 bg-blue-600 text-white rounded">Save Address</button>
-            </div>
-
-            {addressMsg && <div className="mt-3 text-sm text-red-600">{addressMsg}</div>}
           </div>
-        </div>,
-        document.getElementById('cart-address-portal') || document.body
-      )}
+        );
+
+        return createPortal(modal, portalTarget || document.body);
+      })()}
     </div>
   );
 }
