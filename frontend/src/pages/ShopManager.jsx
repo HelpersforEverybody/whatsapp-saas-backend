@@ -689,14 +689,22 @@ export default function ShopManager() {
       {addressModalOpen && (() => {
         const portalTarget = (typeof document !== "undefined") ? document.getElementById("cart-address-portal") : null;
         const isInCart = !!portalTarget;
-        const overlayClass = isInCart ? "absolute inset-0 z-50 bg-black/40 flex items-center justify-center" : "fixed inset-0 z-50 bg-black/40 flex items-end justify-center";
-        const modal = (
-          <div className={overlayClass} onClick={() => { /* click outside - close */ setAddressModalOpen(false); setAddressEditIndex(null); }}>
-            <div
-              className={`bg-white rounded-t-2xl w-full max-w-[520px] p-5 shadow-lg ${isInCart ? "relative" : ""}`}
-              onClick={(e) => e.stopPropagation()}
-              style={{ transform: "none" }}
-            >
+        const overlayClass = isInCart
+  ? "absolute inset-0 z-[10020] bg-black/40 flex items-center justify-center"
+  : "fixed inset-0 z-50 bg-black/40 flex items-end justify-center";
+
+const modal = (
+  <div className={overlayClass} onClick={() => { setAddressModalOpen(false); setAddressEditIndex(null); }}>
+    <div
+      className={`bg-white rounded-t-2xl w-full max-w-[520px] p-5 shadow-lg pointer-events-auto`}
+      onClick={(e) => e.stopPropagation()}
+      style={{ transform: "none", position: isInCart ? "relative" : "static" }}
+    >
+      {/* ... rest of modal content ... */}
+    </div>
+  </div>
+);
+
               <div className="flex justify-between items-center mb-3">
                 <h3 className="text-lg font-semibold">{typeof addressEditIndex === "number" ? "Edit Address" : "Add New Address"}</h3>
                 <button onClick={() => { setAddressModalOpen(false); setAddressMsg(""); setAddressEditIndex(null); }} className="text-gray-600">✕</button>
