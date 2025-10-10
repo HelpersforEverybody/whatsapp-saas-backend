@@ -268,32 +268,36 @@ export default function ShopManager() {
     return null;
   }
 
-  function openAddAddressModal(editIndex = null) {
-    if (typeof editIndex === "number") {
-      const existing = addresses[editIndex] || {};
-      const rawPhone = String(existing.phone || "");
-      const digits = rawPhone.replace(/\D/g, "").slice(-10);
-      setAddressForm({
-        label: existing.label || "Home",
-        name: existing.name || "",
-        phone: digits || "",
-        address: existing.address || "",
-        pincode: existing.pincode || (selectedShop ? selectedShop.pincode : ""),
-      });
-      setAddressEditIndex(editIndex);
-    } else {
-      setAddressForm({
-        label: "Home",
-        name: customerName || "",
-        phone: (customerPhone || "").replace(/\D/g, "").slice(-10),
-        address: "",
-        pincode: selectedShop?.pincode || ""
-      });
-      setAddressEditIndex(null);
-    }
-    setAddressMsg("");
-    setAddressModalOpen(true);
+  function openAddAddressModal(editIndex = null, opts = {}) {
+  const prefill = opts.prefill !== undefined ? Boolean(opts.prefill) : true;
+
+  if (typeof editIndex === "number") {
+    const existing = addresses[editIndex] || {};
+    const rawPhone = String(existing.phone || "");
+    const digits = rawPhone.replace(/\D/g, "").slice(-10);
+    setAddressForm({
+      label: existing.label || "Home",
+      name: existing.name || "",
+      phone: digits || "",
+      address: existing.address || "",
+      pincode: existing.pincode || (selectedShop ? selectedShop.pincode : ""),
+    });
+    setAddressEditIndex(editIndex);
+  } else {
+    // For "Add new" path — allow caller to choose whether to prefill
+    setAddressForm({
+      label: "Home",
+      name: prefill ? (customerName || "") : "",
+      phone: prefill ? ((customerPhone || "").replace(/\D/g, "").slice(-10)) : "",
+      address: "",
+      pincode: selectedShop?.pincode || "",
+    });
+    setAddressEditIndex(null);
   }
+  setAddressMsg("");
+  setAddressModalOpen(true);
+}
+
 
   // add or update (server if logged-in)
   async function addOrUpdateAddress(editIndex = null) {
@@ -645,7 +649,7 @@ export default function ShopManager() {
           totalQty={cartSummary().totalQty}
           totalPrice={cartSummary().totalPrice}
           addresses={addresses}
-          onAddAddress={() => openAddAddressModal(null)}
+          onAddAddress={() => openAddAddressModal(null, { prefill: false })}
           onEditAddress={(idx) => openAddAddressModal(idx)}
           onDeleteAddress={(idx) => { if (!window.confirm("Delete this address?")) return; deleteAddress(idx); }}
           onSetDefault={async (addrId) => {
