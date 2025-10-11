@@ -25,6 +25,14 @@ export default function ShopManager() {
 
   // cart map itemId -> qty
   const [cart, setCart] = useState({});
+  useEffect(() => {
+  console.log('[STATE] menu changed', menu);
+}, [menu]);
+
+useEffect(() => {
+  console.log('[STATE] cart changed', cart);
+}, [cart]);
+
 
   // auth / customer info
   const [customerToken, setCustomerToken] = useState(localStorage.getItem("customer_token") || "");
