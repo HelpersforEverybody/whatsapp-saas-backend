@@ -6,13 +6,33 @@ const mongoose = require('mongoose');
 const http = require('http');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
+const cors = require('cors');
 
 const app = express();
 const server = http.createServer(app);
 const { Server } = require('socket.io');
+const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN || "https://whatsapp-saas-frontend1.onrender.com";
 // somewhere after express() and middleware
 const ordersRouter = require('./routes/orders');
 app.use('/api', ordersRouter);
+// cors options
+const corsOptions = {
+  origin: (origin, callback) => {
+    // allow requests with no origin (e.g. curl, mobile apps)
+    if (!origin) return callback(null, true);
+    // allow the configured origin
+    if (origin === FRONTEND_ORIGIN) return callback(null, true);
+    // otherwise block
+    callback(new Error('Not allowed by CORS'));
+  },
+  methods: ['GET','POST','PUT','PATCH','DELETE','OPTIONS'],
+  allowedHeaders: ['Content-Type','Authorization', 'x-api-key'],
+  credentials: true,
+  preflightContinue: false,
+  optionsSuccessStatus: 204
+};
+
+app.use(cors(corsOptions));
 
 
 const io = new Server(server, {
