@@ -54,31 +54,41 @@ export default function OrderHistory({ open = false, onClose = () => {}, apiBase
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
-  async function fetchOrders(pageToFetch = 1) {
-    setLoading(true);
-    try {
-      const base = apiBase || "";
-      const q = `${base}/api/customers/orders?page=${pageToFetch}&limit=${pageSize}`;
-      const res = await fetch(q, {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-      });
-      if (!res.ok) {
-        // non-fatal: set empty
-        console.error("Failed to load orders", await res.text());
-        setOrders([]);
-        setLoading(false);
-        return;
-      }
-      const data = await res.json();
-      // assume data is array; if backend wraps with pagination adapt accordingly
-      setOrders(Array.isArray(data) ? data : (data.orders || []));
-    } catch (e) {
-      console.error("fetchOrders error", e);
+  // inside OrderHistory.jsx — replace the existing fetchOrders function with this
+
+async function fetchOrders(pageToFetch = 1) {
+  setLoading(true);
+  try {
+    const base = apiBase || "";
+    const q = `${base}/api/customers/orders?page=${pageToFetch}&limit=${pageSize}`;
+
+    console.log("[OrderHistory] fetching", q, "token:", !!token);
+    const res = await fetch(q, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+
+    console.log("[OrderHistory] response status:", res.status);
+    if (!res.ok) {
+      const txt = await res.text();
+      console.error("[OrderHistory] non-ok response:", res.status, txt);
+      // surface to user
       setOrders([]);
-    } finally {
       setLoading(false);
+      return;
     }
+
+    // try parse json, also log what we get
+    const data = await res.json();
+    console.log("[OrderHistory] payload:", data);
+    setOrders(Array.isArray(data) ? data : (data.orders || []));
+  } catch (e) {
+    console.error("fetchOrders error", e);
+    setOrders([]);
+  } finally {
+    setLoading(false);
   }
+}
+
 
   function openDetails(order) {
     setSelectedOrder(order);
