@@ -849,22 +849,32 @@ app.post('/webhook/whatsapp', async (req, res) => {
 
   try {
     // MENU: "menu <shopPhone>"
-    if (cmd === 'menu' && parts[1]) {
-      const shopPhone = parts[1];
-      const shop = await Shop.findOne({ phone: shopPhone });
-      if (!shop) {
-        twiml.message(`Shop ${shopPhone} not found.`);
-      } else {
-        const items = await MenuItem.find({ shop: shop._id, available: true });
-        if (!items.length) {
-          twiml.message(`No items found for ${shop.name}.`);
-        } else {
-          let msg = `Menu for ${shop.name}:\n`;
-          items.forEach(it => (msg += `${it.externalId}. ${it.name} — ₹${it.price}\n`));
-          msg += `\nTo order: order ${shop.phone} <itemId> <qty>`;
-          twiml.message(msg);
-        }
-      }
+   if (cmd === 'menu' && parts[1]) {
+  const shopPhone = parts[1];
+  const shop = await Shop.findOne({ phone: shopPhone });
+  if (!shop) {
+    twiml.message(`Shop ${shopPhone} not found.`);
+  } else {
+    const items = await MenuItem.find({ shop: shop._id, available: true });
+    if (!items.length) {
+      twiml.message(`No items found for ${shop.name}.`);
+    } else {
+      let msg = `📋 *Menu for ${shop.name}:*\n`;
+      
+      // assign alphabet letters A, B, C... for user-friendly selection
+      items.forEach((it, i) => {
+        const label = String.fromCharCode(65 + i); // 65 = 'A'
+        msg += `${label}. ${it.name} — ₹${it.price}\n`;
+      });
+
+      msg += `\nTo order: *order ${shop.phone} <letter> <qty>*`;
+      msg += `\nExample: order ${shop.phone} A 2 B 1`;
+
+      twiml.message(msg);
+    }
+  }
+}
+
 
     // ORDER: "order <shopPhone> <itemExt> <qty> [<itemExt2> <qty2> ...]"
     } else if (cmd === 'order' && parts.length >= 3) {
