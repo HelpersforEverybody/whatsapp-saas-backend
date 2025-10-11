@@ -836,11 +836,12 @@ app.get('/api/customers/orders/:id', requireCustomer, async (req, res) => {
 });
 
 app.post('/webhook/whatsapp', async (req, res) => {
-  // Twilio might send fields with different casing depending on config
+  // Twilio may send fields with different casing
   const fromRaw = (req.body.From || req.body.from || '').toString();
   const rawBody = (req.body.Body || req.body.body || '').toString().trim();
   console.log('Incoming WhatsApp:', fromRaw, rawBody);
 
+  // split tokens on any whitespace (covers newlines, spaces, tabs)
   const parts = (rawBody || '').split(/\s+/).filter(Boolean);
   const cmd = (parts[0] || '').toLowerCase();
 
@@ -848,79 +849,102 @@ app.post('/webhook/whatsapp', async (req, res) => {
   const twiml = new MessagingResponse();
 
   try {
-    // MENU: "menu <shopPhone>"
-   if (cmd === 'menu' && parts[1]) {
-  const shopPhone = parts[1];
-  const shop = await Shop.findOne({ phone: shopPhone });
-  if (!shop) {
-    twiml.message(`Shop ${shopPhone} not found.`);
-  } else {
-    const items = await MenuItem.find({ shop: shop._id, available: true });
-    if (!items.length) {
-      twiml.message(`No items found for ${shop.name}.`);
-    } else {
-      let msg = `📋 *Menu for ${shop.name}:*\n`;
-      
-      // assign alphabet letters A, B, C... for user-friendly selection
-      items.forEach((it, i) => {
-        const label = String.fromCharCode(65 + i); // 65 = 'A'
-        msg += `${label}. ${it.name} — ₹${it.price}\n`;
-      });
+    // ---------- MENU ----------
+    // "menu <shopPhone>"
+    if (cmd === 'menu' && parts[1]) {
+      const shopPhone = parts[1];
+      const shop = await Shop.findOne({ phone: shopPhone });
+      if (!shop) {
+        twiml.message(`Shop ${shopPhone} not found.`);
+      } else {
+        const items = await MenuItem.find({ shop: shop._id, available: true }).lean();
+        if (!items || items.length === 0) {
+          twiml.message(`No items found for ${shop.name}.`);
+        } else {
+          // build friendly menu with letters A, B, C...
+          let msg = `📋 Menu for ${shop.name}:\n\n`;
+          items.forEach((it, i) => {
+            const label = String.fromCharCode(65 + i); // A, B, C...
+            msg += `${label}. ${it.name} — ₹${it.price}\n`;
+          });
+          msg += `\nTo order: order ${shop.phone} <letter|itemId> <qty> [<letter|itemId> <qty> ...]`;
+          msg += `\nExample: order ${shop.phone} A 2 B 1`;
+          twiml.message(msg);
+        }
+      }
 
-      msg += `\nTo order: *order ${shop.phone} <letter> <qty>*`;
-      msg += `\nExample: order ${shop.phone} A 2 B 1`;
-
-      twiml.message(msg);
-    }
-  }
-}
-
-
-    // ORDER: "order <shopPhone> <itemExt> <qty> [<itemExt2> <qty2> ...]"
+    // ---------- ORDER ----------
+    // "order <shopPhone> <itemExt> <qty> [<itemExt2> <qty2> ...]"
     } else if (cmd === 'order' && parts.length >= 3) {
       const shopPhone = parts[1];
-      const rest = parts.slice(2);
+      const rest = parts.slice(2); // remaining tokens
 
       if (rest.length === 0) {
-        twiml.message('Usage: order <shopPhone> <itemId> <qty> [<itemId2> <qty2> ...]');
+        twiml.message('Usage: order <shopPhone> <itemId|letter> <qty> [<itemId|letter> <qty> ...]');
       } else {
         const shop = await Shop.findOne({ phone: shopPhone });
         if (!shop) {
           twiml.message(`Shop ${shopPhone} not found.`);
         } else {
-          // parse pairs — if odd token at end, assume qty=1
-          const pairs = [];
-          for (let i = 0; i < rest.length; i += 2) {
-            const itemExt = rest[i];
-            const qtyToken = rest[i + 1];
-            const qty = qtyToken ? Math.max(1, parseInt(qtyToken, 10) || 1) : 1;
-            pairs.push({ itemExt: String(itemExt).trim(), qty });
-          }
+          // fetch current menu items once
+          const menuItems = await MenuItem.find({ shop: shop._id, available: true }).lean() || [];
 
-          // lookup by externalId in one query
-          const externalIds = pairs.map(p => p.itemExt);
-          const menuItems = await MenuItem.find({ shop: shop._id, externalId: { $in: externalIds } }).lean();
-
-          // build map for quick lookup (trim keys to be safe)
-          const foundByExt = {};
+          // build map: externalId (upper trimmed) -> item, and index map for letters
+          const extMap = {};
           menuItems.forEach(mi => {
-            if (mi.externalId) foundByExt[String(mi.externalId).trim()] = mi;
+            if (mi.externalId) extMap[String(mi.externalId).trim().toUpperCase()] = mi;
           });
 
-          const missing = pairs.filter(p => !foundByExt[p.itemExt]).map(p => p.itemExt);
-          if (missing.length) {
-            twiml.message(`Item(s) not found: ${missing.join(', ')}. Check the menu and use the external Ids shown.`);
+          // parse tokens into pairs; allow final odd token to mean qty=1
+          const pairs = [];
+          for (let i = 0; i < rest.length; i += 2) {
+            const itemTokenRaw = rest[i];
+            const qtyToken = rest[i + 1];
+            const qty = qtyToken ? Math.max(1, parseInt(qtyToken, 10) || 1) : 1;
+            pairs.push({ token: String(itemTokenRaw).trim(), qty });
+          }
+
+          // resolve each pair to a menu item (support: letter A/B/C..., externalId, or exact name match)
+          const resolved = [];
+          const missingTokens = [];
+          for (const p of pairs) {
+            const t = p.token;
+            let mi = null;
+
+            // 1) If token is a single letter A..Z, map to index in menuItems
+            if (/^[A-Za-z]$/.test(t)) {
+              const idx = t.toUpperCase().charCodeAt(0) - 65;
+              if (idx >= 0 && idx < menuItems.length) mi = menuItems[idx];
+            }
+
+            // 2) Try externalId (case-insensitive)
+            if (!mi) {
+              const lookup = String(t).trim().toUpperCase();
+              if (extMap[lookup]) mi = extMap[lookup];
+            }
+
+            // 3) Try exact name match (case-insensitive)
+            if (!mi) {
+              const byName = menuItems.find(x => String(x.name || '').trim().toLowerCase() === String(t).trim().toLowerCase());
+              if (byName) mi = byName;
+            }
+
+            if (!mi) missingTokens.push(t);
+            else resolved.push({ menuItem: mi, qty: Number(p.qty || 1) });
+          }
+
+          if (missingTokens.length) {
+            twiml.message(`Item(s) not found: ${missingTokens.join(', ')}. Check the menu and use the letter or item code shown.`);
           } else {
-            // Build items array with pricing and line totals
-            const items = pairs.map(p => {
-              const mi = foundByExt[p.itemExt];
-              const price = Number(mi.price || 0);
-              const qty = Number(p.qty || 1);
+            // build items with price/line totals
+            const itemsForOrder = resolved.map(r => {
+              const price = Number(r.menuItem.price || 0);
+              const qty = Number(r.qty || 1);
               const lineTotal = price * qty;
-              return { name: mi.name, qty, price, lineTotal };
+              return { name: r.menuItem.name, qty, price, lineTotal };
             });
 
-            const itemsTotal = items.reduce((s, it) => s + (Number(it.lineTotal || 0)), 0);
+            const itemsTotal = itemsForOrder.reduce((s, x) => s + x.lineTotal, 0);
             const deliveryFee = 0;
             const total = itemsTotal + deliveryFee;
 
@@ -948,29 +972,29 @@ app.post('/webhook/whatsapp', async (req, res) => {
                 phone: normalizedPhone,
                 pincode: ''
               },
-              items: items.map(it => ({ name: it.name, qty: it.qty, price: it.price })),
-              total: total,
+              items: itemsForOrder.map(it => ({ name: it.name, qty: it.qty, price: it.price })),
+              total,
               status: 'received',
               createdAt: new Date()
             };
 
             const order = await Order.create(orderPayload);
-
             const displayId = order.orderNumber ? `#${String(order.orderNumber).padStart(6, '0')}` : String(order._id);
 
-            // Build pretty item lines for messages
-            const itemLines = items.map(i => `${i.name} ×${i.qty} — ₹${i.price} = ₹${i.lineTotal}`).join('\n');
+            // pretty item lines for WhatsApp messages
+            const itemLines = itemsForOrder.map(i => `${i.name} ×${i.qty} — ₹${i.price} = ₹${i.lineTotal}`).join('\n');
 
-            // notify shop & customer with detailed breakdown
+            // Notify shop
             sendWhatsAppMessageSafe(
               shop.phone,
               `📥 New order ${displayId} from ${order.phone}\n\n${itemLines}\n\nTotal: ₹${order.total}`
-            ).catch(()=>{});
+            ).catch(() => {});
 
+            // Notify customer
             sendWhatsAppMessageSafe(
               order.phone,
               `✅ Order placed: ${displayId}\n\n${itemLines}\n\nTotal: ₹${order.total}\nYou will receive updates here.`
-            ).catch(()=>{});
+            ).catch(() => {});
 
             // socket emit
             try {
@@ -983,34 +1007,35 @@ app.post('/webhook/whatsapp', async (req, res) => {
             } catch (e) { console.error('Socket emit error (webhook):', e); }
 
             // reply to webhook sender
-            twiml.message(`✅ Order placed: ${displayId}\n\n${items.map(i => `${i.name} ×${i.qty} — ₹${i.price} = ₹${i.lineTotal}`).join('\n')}\n\nTotal: ₹${order.total}\nYou will receive updates here.`);
+            twiml.message(`✅ Order placed: ${displayId}\n\n${itemLines}\n\nTotal: ₹${order.total}\nYou will receive updates here.`);
           }
         }
       }
 
-    // STATUS query: "status <orderId>"
+    // ---------- STATUS ----------
     } else if (cmd === 'status' && parts[1]) {
       try {
         const order = await Order.findById(parts[1]);
         if (!order) twiml.message(`Order ${parts[1]} not found.`);
-        else twiml.message(`Order ${order._id} status: ${order.status}`);
+        else twiml.message(`Order ${order.orderNumber ? `#${String(order.orderNumber).padStart(6,'0')}` : order._id} status: ${order.status}`);
       } catch (e) {
         twiml.message('Invalid order id.');
       }
 
-    // fallback/help
+    // ---------- FALLBACK ----------
     } else {
-      twiml.message('Welcome. Commands:\n1) menu <shopPhone>\n2) order <shopPhone> <itemId> <qty> [<itemId2> <qty2> ...]\n3) status <orderId>');
+      twiml.message('Welcome. Commands:\n1) menu <shopPhone>\n2) order <shopPhone> <letter|itemId> <qty> [more pairs]\n3) status <orderId>');
     }
   } catch (err) {
     console.error('Webhook error:', err);
     try { twiml.message('Server error.'); } catch (e) {}
   }
 
-  // respond with TwiML
+  // respond with TwiML XML
   res.writeHead(200, { 'Content-Type': 'text/xml' });
   res.end(twiml.toString());
 });
+
 
 
 
