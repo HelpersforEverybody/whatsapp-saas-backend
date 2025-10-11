@@ -13,46 +13,58 @@ import React, { useEffect, useState, useRef } from "react";
  *  <OrderHistory open={open} onClose={...} onReorder={handleReorder} />
  */
 
-// normalize status + render colored badge
+/* ---------- Helper: Status Badge (colors consistent with owner dashboard) ---------- */
 function StatusBadge({ status }) {
   if (!status) return null;
 
-  // normalize: lower-case, convert spaces or dashes to underscores
+  // normalize: lowercase, replace spaces/dashes with underscore for keys
   const key = String(status || "").toLowerCase().replace(/\s+/g, "_").replace(/-/g, "_");
 
-const map = {
-  received:          { label: "received",        className: "bg-gray-200 text-gray-800" },
-  pending:           { label: "pending",         className: "bg-gray-200 text-gray-800" },
-  accepted:          { label: "accepted",        className: "bg-yellow-100 text-yellow-800" },
-  preparing:         { label: "preparing",       className: "bg-yellow-100 text-yellow-800" },
-  packed:            { label: "packed",          className: "bg-blue-100 text-blue-800" },
-  out_for_delivery:  { label: "out-for-delivery", className: "bg-indigo-100 text-indigo-800" },
-  delivered:         { label: "delivered",       className: "bg-green-100 text-green-800" },
-  completed:         { label: "delivered",       className: "bg-green-100 text-green-800" },
-  cancelled:         { label: "cancelled",       className: "bg-red-100 text-red-800" },
-  failed:            { label: "failed",          className: "bg-red-200 text-red-800" },
-};
+  const map = {
+    // map of canonical statuses -> (label, tailwind classes)
+    received:           { label: "received",         className: "bg-gray-100 text-gray-800" },
+    pending:            { label: "pending",          className: "bg-gray-100 text-gray-800" },
+    accepted:           { label: "accepted",         className: "bg-yellow-100 text-yellow-800" },
+    preparing:          { label: "preparing",        className: "bg-yellow-100 text-yellow-800" },
+    packed:             { label: "packed",           className: "bg-indigo-50 text-indigo-800" },
+    ready:              { label: "ready",            className: "bg-indigo-100 text-indigo-800" },
+    out_for_delivery:   { label: "out-for-delivery", className: "bg-blue-100 text-blue-800" },
+    out_for_delivery_alt:{ label: "out-for-delivery", className: "bg-blue-100 text-blue-800" },
+    delivered:          { label: "delivered",        className: "bg-green-100 text-green-800" },
+    completed:          { label: "delivered",        className: "bg-green-100 text-green-800" },
+    cancelled:          { label: "cancelled",        className: "bg-red-100 text-red-800" },
+    failed:             { label: "failed",           className: "bg-red-200 text-red-800" },
+  };
 
-
-  // allow both dash and underscore styles: map both "out-for-delivery" and "out_for_delivery"
+  // fallback to replace dashes too
   const altKey = key.replace(/-/g, "_");
-
   const entry = map[key] || map[altKey] || { label: status, className: "bg-gray-100 text-gray-800" };
+
+  // keep label as provided in map (lowercase) — if you want Title Case, transform here
+  const displayLabel = entry.label;
+
   return (
     <span className={`inline-block px-2 py-0.5 text-xs rounded ${entry.className}`}>
-      {entry.label.replace(/-/g, " ").replace(/\b\w/g, l => l.toUpperCase())}
+      {displayLabel}
     </span>
   );
 }
 
-// helper to get canonical total from order object (supports different field names)
+/* ---------- Helper: canonical total from order object ---------- */
 function getOrderTotal(order) {
   if (!order) return 0;
-  // prefer 'total' (backend), fall back to 'totalPrice', 'amount' etc if some other naming used
-  return Number(order.total ?? order.totalPrice ?? order.amount ?? 0);
+  // prefer common fields: total, totalPrice, amount, totalPrice (server variations)
+  return Number(order.total ?? order.totalPrice ?? order.totalPrice ?? order.amount ?? 0);
 }
 
-export default function OrderHistory({ open = false, onClose = () => {}, apiBase = "", authToken = "", onReorder = () => {} }) {
+/* ---------- Component ---------- */
+export default function OrderHistory({
+  open = false,
+  onClose = () => {},
+  apiBase = "",
+  authToken = "",
+  onReorder = () => {}
+}) {
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(false);
   const [page, setPage] = useState(1);
@@ -60,13 +72,14 @@ export default function OrderHistory({ open = false, onClose = () => {}, apiBase
   const [selectedOrder, setSelectedOrder] = useState(null);
   const pollingRef = useRef(null);
 
+  // token: prop overrides localStorage
   const token = authToken || (typeof window !== "undefined" ? localStorage.getItem("customer_token") : "");
 
   useEffect(() => {
     if (open) {
       setPage(1);
       fetchOrders(1);
-      // start polling every 8s while modal open
+      // poll while modal open to reflect status changes
       pollingRef.current = setInterval(() => fetchOrders(page), 8000);
     } else {
       if (pollingRef.current) clearInterval(pollingRef.current);
@@ -88,15 +101,27 @@ export default function OrderHistory({ open = false, onClose = () => {}, apiBase
         headers: token ? { Authorization: `Bearer ${token}` } : {},
       });
       if (!res.ok) {
-        // non-fatal: set empty
-        console.error("Failed to load orders", await res.text());
+        console.error("Failed to load orders:", await res.text());
         setOrders([]);
         setLoading(false);
         return;
       }
       const data = await res.json();
-      // assume data is array; if backend wraps with pagination adapt accordingly
-      setOrders(Array.isArray(data) ? data : (data.orders || []));
+
+      // support either:
+      // 1) backend returns an array of orders,
+      // 2) backend returns { orders: [...], total, page, limit } pagination object
+      if (Array.isArray(data)) {
+        setOrders(data);
+      } else if (Array.isArray(data.orders)) {
+        setOrders(data.orders);
+      } else if (Array.isArray(data.data)) {
+        // some APIs use data.data
+        setOrders(data.data);
+      } else {
+        // unknown shape -> attempt to coerce
+        setOrders(data.orders ?? data.data ?? []);
+      }
     } catch (e) {
       console.error("fetchOrders error", e);
       setOrders([]);
@@ -108,16 +133,25 @@ export default function OrderHistory({ open = false, onClose = () => {}, apiBase
   function openDetails(order) {
     setSelectedOrder(order);
   }
-
   function closeDetails() {
     setSelectedOrder(null);
   }
 
   function handleReorder(order) {
-    // send items back to parent to handle adding to current cart
+    // forward order object to parent (ShopManager) which will handle adding to cart
     onReorder(order);
-    // optionally close history
     onClose();
+  }
+
+  // helper: display order number (prefer numeric orderNumber, zero-padded)
+  function displayOrderNumber(o) {
+    if (!o) return "";
+    if (typeof o.orderNumber !== "undefined" && o.orderNumber !== null) {
+      // numeric orderNumber: show zero-padded 6 digits (you can change padding)
+      return String(o.orderNumber).padStart(6, "0");
+    }
+    // fallback: last 6 chars of _id
+    return String(o._id || "").slice(-6);
   }
 
   return !open ? null : (
@@ -135,18 +169,19 @@ export default function OrderHistory({ open = false, onClose = () => {}, apiBase
           <div className="text-sm text-gray-600 p-4">No past orders found.</div>
         ) : (
           <div className="space-y-3 max-h-[60vh] overflow-auto pr-2">
-            {orders.map(o => (
-              <div key={o._id} className="p-3 border rounded flex justify-between items-start bg-white">
+            {orders.map((o) => (
+              <div key={o._id ?? Math.random()} className="p-3 border rounded flex justify-between items-start bg-white">
                 <div className="flex-1">
                   <div className="flex items-center gap-3">
-                    <div className="font-medium">Order #{o.orderNumber ? String(o.orderNumber).padStart(6, "0") : String(o._id).slice(-6)}</div>
-                    <div className="text-xs text-gray-500">{(new Date(o.createdAt)).toLocaleString()}</div>
+                    <div className="font-medium">Order #{displayOrderNumber(o)}</div>
+                    <div className="text-xs text-gray-500">{ o.createdAt ? (new Date(o.createdAt)).toLocaleString() : "" }</div>
                     <div className="ml-2">
                       <StatusBadge status={o.status} />
                     </div>
                   </div>
+
                   <div className="text-sm text-gray-600 mt-2">
-                    { (o.items || []).slice(0,3).map(it => `${it.qty}× ${it.name}`).join(", ") } { (o.items && o.items.length > 3) ? ` + ${o.items.length - 3} more` : "" }
+                    { (o.items || []).slice(0,3).map(it => `${it.qty}× ${it.name}`).join(", ") }{ (o.items && o.items.length > 3) ? ` + ${o.items.length - 3} more` : "" }
                   </div>
                 </div>
 
@@ -177,19 +212,20 @@ export default function OrderHistory({ open = false, onClose = () => {}, apiBase
             <div className="absolute inset-0 bg-black/40" onClick={closeDetails} />
             <div className="relative bg-white rounded-lg w-[92%] max-w-2xl p-4 shadow-lg z-[11110]">
               <div className="flex items-center justify-between mb-3">
-                <h4 className="text-lg font-semibold">Order #{String(selectedOrder.orderNumber ?? String(selectedOrder._id)).slice(-6)} details</h4>
+                <h4 className="text-lg font-semibold">Order #{displayOrderNumber(selectedOrder)} details</h4>
                 <button onClick={closeDetails} className="px-2 py-1 rounded bg-gray-100">Close</button>
               </div>
 
               <div className="space-y-3">
                 <div className="text-sm text-gray-600">Status: <StatusBadge status={selectedOrder.status} /></div>
+
                 <div className="border rounded p-3">
                   <div className="font-medium mb-2">Items</div>
                   <div className="space-y-2">
                     {(selectedOrder.items || []).map((it, idx) => (
                       <div key={idx} className="flex justify-between">
                         <div className="text-sm">{it.name} <span className="text-xs text-gray-500">×{it.qty}</span></div>
-                        <div className="text-sm font-semibold">₹{(Number(it.price||0) * Number(it.qty||1)).toFixed(0)}</div>
+                        <div className="text-sm font-semibold">₹{(Number(it.price || 0) * Number(it.qty || 1)).toFixed(0)}</div>
                       </div>
                     ))}
                   </div>
