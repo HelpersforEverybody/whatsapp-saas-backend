@@ -2,17 +2,22 @@
 const mongoose = require('mongoose');
 
 const CounterSchema = new mongoose.Schema({
-  name: { type: String, required: true, unique: true },
-  seq: { type: Number, default: 0 }
-});
+  _id: { type: String, required: true }, // name of the counter, e.g. "orderNumber"
+  seq: { type: Number, default: 0 },
+}, { timestamps: true });
 
-CounterSchema.statics.next = async function (name) {
-  const rec = await this.findOneAndUpdate(
-    { name },
+/**
+ * Atomically increment and return next sequence for given counter name.
+ * Usage: await Counter.next('orderNumber')
+ */
+CounterSchema.statics.next = async function(name) {
+  if (!name) throw new Error('Counter name required');
+  const updated = await this.findByIdAndUpdate(
+    name,
     { $inc: { seq: 1 } },
-    { new: true, upsert: true }
-  );
-  return rec.seq;
+    { new: true, upsert: true, setDefaultsOnInsert: true }
+  ).lean();
+  return updated.seq;
 };
 
 module.exports = mongoose.model('Counter', CounterSchema);
