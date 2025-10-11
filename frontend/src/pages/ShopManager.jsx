@@ -148,13 +148,17 @@ export default function ShopManager() {
   }
   // replace existing handleReorder with this:
 // Replace existing handleReorder with this improved version
+// Improved handleReorder — paste this into ShopManager.jsx
 function handleReorder(order) {
-  if (!order || !Array.isArray(order.items)) return;
+  if (!order || !Array.isArray(order.items)) {
+    console.warn('handleReorder called with invalid order', order);
+    return;
+  }
 
-  // Work with the current menu snapshot
+  // snapshot of current menu
   const currentMenu = Array.isArray(menu) ? menu.slice() : [];
 
-  // Prepare new cart keyed by menu item _id (or synthetic id)
+  // new cart keyed by item _id (or synthetic id)
   const newCart = {};
   const syntheticToAdd = [];
 
@@ -165,7 +169,7 @@ function handleReorder(order) {
     const itemExternal = orderItem.externalId || orderItem.external_id || null;
     const itemIdFromOrder = orderItem._id || orderItem.id || null;
 
-    // Try to match by _id, externalId, then name (case-insensitive)
+    // Try to match an existing menu item by _id, externalId or name (case-insensitive)
     const found = currentMenu.find(m =>
       (itemIdFromOrder && String(m._id) === String(itemIdFromOrder)) ||
       (itemExternal && m.externalId && String(m.externalId) === String(itemExternal)) ||
@@ -176,7 +180,7 @@ function handleReorder(order) {
       const key = String(found._id);
       newCart[key] = (newCart[key] || 0) + itemQty;
     } else {
-      // create a synthetic item object (kept in local array first)
+      // create synthetic item that will be appended to menu
       const syntheticId = `reorder_${Math.random().toString(36).slice(2, 9)}`;
       const syntheticItem = {
         _id: syntheticId,
@@ -190,17 +194,23 @@ function handleReorder(order) {
     }
   });
 
-  // If we have synthetic items, append them once to a new menu array and set it
+  // Build new menu once (append synthetic items)
   const newMenu = syntheticToAdd.length ? [...currentMenu, ...syntheticToAdd] : currentMenu;
-  setMenu(newMenu);
 
-  // Now set cart. On next render both menu and cart will be up-to-date so lookups succeed.
+  // DEBUG: log inside function (this will appear in browser console)
+  console.log('[handleReorder] newCart:', newCart);
+  console.log('[handleReorder] syntheticToAdd:', syntheticToAdd);
+  console.log('[handleReorder] newMenu length:', newMenu.length);
+
+  // Apply state changes — setMenu then setCart
+  setMenu(newMenu);
   setCart(newCart);
 
-  // Close order history and open cart for user to review
+  // Close history and open cart for review
   setOrderHistoryOpen(false);
   setCartModalOpen(true);
 }
+
 
 
   // -------------------------
