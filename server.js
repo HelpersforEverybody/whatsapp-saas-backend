@@ -866,86 +866,108 @@ app.post('/webhook/whatsapp', async (req, res) => {
         }
       }
 
-    } else if (cmd === 'order' && parts[1] && parts[2] && parts[3]) {
-      // order <shopPhone> <itemExtId> <qty>
-      const shopPhone = parts[1];
-      const itemExt = parts[2];
-      const qty = Math.max(1, parseInt(parts[3], 10) || 1);
+    } /* order handling: allow multiple "<itemExt> <qty>" pairs after shopPhone */
+} else if (cmd === 'order' && parts.length >= 3) {
+  // parts: ["order", "<shopPhone>", "<itemExt1>", "<qty1>", "<itemExt2>", "<qty2>", ...]
+  const shopPhone = parts[1];
+  const rest = parts.slice(2); // itemExt and qty pairs
 
-      const shop = await Shop.findOne({ phone: shopPhone });
-      if (!shop) {
-        twiml.message(`Shop ${shopPhone} not found.`);
-      } else {
-        const item = await MenuItem.findOne({ shop: shop._id, externalId: itemExt });
-        if (!item) {
-          twiml.message(`Item ${itemExt} not found.`);
-        } else {
-          // normalize customer phone (strip 'whatsapp:' prefix if present)
-          const fromPhoneRaw = (fromRaw || '').replace(/^whatsapp:/i, '').trim();
-          const normalizedPhone = normalizePhoneInput(fromPhoneRaw) || fromPhoneRaw;
-
-          // compute totals & prepare order payload
-          const items = [{ name: item.name, qty, price: Number(item.price || 0) }];
-          const itemsTotal = items.reduce((s, it) => s + (Number(it.price || 0) * Number(it.qty || 1)), 0);
-          const deliveryFee = 0;
-          const total = itemsTotal + deliveryFee;
-
-          // allocate numeric orderNumber per-shop (atomic increment)
-          let orderNumber = null;
-          try {
-            const seq = await Shop.findByIdAndUpdate(
-              shop._id,
-              { $inc: { lastOrderNumber: 1 } },
-              { new: true }
-            ).lean();
-            if (seq && typeof seq.lastOrderNumber !== 'undefined') orderNumber = seq.lastOrderNumber;
-          } catch (e) {
-            console.warn('Failed to increment shop.lastOrderNumber (webhook):', e && e.message ? e.message : e);
-          }
-
-          // create order document (store numeric orderNumber if available)
-          const orderPayload = {
-            shop: shop._id,
-            orderNumber: orderNumber ?? null,
-            customer: null,
-            customerName: `WhatsApp:${fromPhoneRaw}`,
-            phone: normalizedPhone,
-            address: {
-              label: 'WhatsApp',
-              address: `WhatsApp order from ${fromPhoneRaw}`,
-              phone: normalizedPhone,
-              pincode: ''
-            },
-            items: items.map(it => ({ name: it.name, qty: it.qty, price: it.price })),
-            total: total,
-            status: 'received',
-            createdAt: new Date()
-          };
-
-          const order = await Order.create(orderPayload);
-
-          // prepare display id (prefer numeric orderNumber, zero-pad to 6 digits)
-          const displayId = order.orderNumber ? `#${String(order.orderNumber).padStart(6, '0')}` : String(order._id);
-
-          // notify shop and customer (non-blocking)
-          sendWhatsAppMessageSafe(shop.phone, `📥 New order ${displayId} from ${order.phone} — ${item.name} x${qty} — ₹${order.total}`).catch(() => {});
-          sendWhatsAppMessageSafe(order.phone, `✅ Order received: ${displayId}. Total: ₹${order.total}`).catch(() => {});
-
-          // emit socket update with orderNumber included
-          try {
-            emitOrderUpdate(order._id.toString(), {
-              orderId: order._id.toString(),
-              orderNumber: order.orderNumber ?? null,
-              status: order.status,
-              at: new Date().toISOString(),
-            });
-          } catch (e) {
-            console.error('Socket emit error (webhook):', e);
-          }
-
-          twiml.message(`✅ Order placed: ${displayId}\nTotal: ₹${order.total}\nYou will receive updates here.`);
-        }
+  // normalize rest so that newlines/commas/spaces all become tokens (we already split by whitespace)
+  if (rest.length === 0) {
+    twiml.message('Usage: order <shopPhone> <itemId> <qty> [<itemId2> <qty2> ...]');
+  } else {
+    const shop = await Shop.findOne({ phone: shopPhone });
+    if (!shop) {
+      twiml.message(`Shop ${shopPhone} not found.`);
+    } else {
+      // parse pairs: treat odd final token as item with qty=1
+      const pairs = [];
+      for (let i = 0; i < rest.length; i += 2) {
+        const itemExt = rest[i];
+        // if there's no qty following, assume 1
+        const qtyToken = rest[i + 1];
+        const qty = qtyToken ? Math.max(1, parseInt(qtyToken, 10) || 1) : 1;
+        pairs.push({ itemExt: String(itemExt).trim(), qty });
       }
+
+      // look up all items by externalId (one DB query)
+      const externalIds = pairs.map(p => p.itemExt);
+      const menuItems = await MenuItem.find({ shop: shop._id, externalId: { $in: externalIds } }).lean();
+
+      // find missing
+      const foundByExt = {};
+      menuItems.forEach(mi => { foundByExt[String(mi.externalId).trim()] = mi; });
+
+      const missing = pairs.filter(p => !foundByExt[p.itemExt]).map(p => p.itemExt);
+      if (missing.length) {
+        twiml.message(`Item(s) not found: ${missing.join(', ')}. Check the menu and use the external Ids shown.`);
+      } else {
+        // build items array and compute totals
+        const items = pairs.map(p => {
+          const mi = foundByExt[p.itemExt];
+          const price = Number(mi.price || 0);
+          const qty = Number(p.qty || 1);
+          return { name: mi.name, qty, price };
+        });
+        const itemsTotal = items.reduce((s, it) => s + (Number(it.price || 0) * Number(it.qty || 1)), 0);
+        const deliveryFee = 0;
+        const total = itemsTotal + deliveryFee;
+
+        // allocate numeric orderNumber per-shop (atomic increment)
+        let orderNumber = null;
+        try {
+          const seq = await Shop.findByIdAndUpdate(shop._id, { $inc: { lastOrderNumber: 1 } }, { new: true }).lean();
+          if (seq && typeof seq.lastOrderNumber !== 'undefined') orderNumber = seq.lastOrderNumber;
+        } catch (e) {
+          console.warn('Failed to increment shop.lastOrderNumber (webhook):', e && e.message ? e.message : e);
+        }
+
+        const fromPhoneRaw = (fromRaw || '').replace(/^whatsapp:/i, '').trim();
+        const normalizedPhone = normalizePhoneInput(fromPhoneRaw) || fromPhoneRaw;
+
+        // create order document
+        const orderPayload = {
+          shop: shop._id,
+          orderNumber: orderNumber ?? null,
+          customer: null,
+          customerName: `WhatsApp:${fromPhoneRaw}`,
+          phone: normalizedPhone,
+          address: {
+            label: 'WhatsApp',
+            address: `WhatsApp order from ${fromPhoneRaw}`,
+            phone: normalizedPhone,
+            pincode: ''
+          },
+          items: items.map(it => ({ name: it.name, qty: it.qty, price: it.price })),
+          total: total,
+          status: 'received',
+          createdAt: new Date()
+        };
+
+        const order = await Order.create(orderPayload);
+
+        const displayId = order.orderNumber ? `#${String(order.orderNumber).padStart(6, '0')}` : String(order._id);
+
+        // notify shop & customer
+        sendWhatsAppMessageSafe(shop.phone, `📥 New order ${displayId} from ${order.phone} — ${items.map(i=>`${i.name} x${i.qty}`).join(', ')} — ₹${order.total}`).catch(()=>{});
+        sendWhatsAppMessageSafe(order.phone, `✅ Order placed: ${displayId}. Total: ₹${order.total}`).catch(()=>{});
+
+        // socket emit
+        try {
+          emitOrderUpdate(order._id.toString(), {
+            orderId: order._id.toString(),
+            orderNumber: order.orderNumber ?? null,
+            status: order.status,
+            at: new Date().toISOString()
+          });
+        } catch (e) { console.error('Socket emit error (webhook):', e); }
+
+        // reply to user
+        twiml.message(`✅ Order placed: ${displayId}\nTotal: ₹${order.total}\nYou will receive updates here.`);
+      }
+    }
+  }
+}
 
     } else if (cmd === 'status' && parts[1]) {
       // status <orderId or orderNumber>
