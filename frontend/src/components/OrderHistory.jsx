@@ -20,23 +20,19 @@ function StatusBadge({ status }) {
   // normalize: lower-case, convert spaces or dashes to underscores
   const key = String(status || "").toLowerCase().replace(/\s+/g, "_").replace(/-/g, "_");
 
-  const map = {
-    // customer-facing / owner-facing statuses and their visual style
-    received:      { label: "received",        className: "bg-gray-100 text-gray-800" },
-    pending:       { label: "pending",         className: "bg-gray-100 text-gray-800" },
-    accepted:      { label: "accepted",        className: "bg-indigo-100 text-indigo-800" }, // you may prefer another color
-    preparing:     { label: "preparing",       className: "bg-yellow-100 text-yellow-800" },
-    packed:        { label: "packed",          className: "bg-indigo-50 text-indigo-800" },
-    ready:         { label: "ready",           className: "bg-indigo-100 text-indigo-800" },
-    out_for_delivery: { label: "out-for-delivery", className: "bg-blue-100 text-blue-800" },
-    out_for_delivery_alt: { label: "out-for-delivery", className: "bg-blue-100 text-blue-800" },
-    out_for_delivery_dash: { label: "out-for-delivery", className: "bg-blue-100 text-blue-800" },
-    out_for_delivery_text: { label: "out-for-delivery", className: "bg-blue-100 text-blue-800" },
-    delivered:     { label: "Delivered",       className: "bg-green-100 text-green-800" },
-    completed:     { label: "Delivered",       className: "bg-green-100 text-green-800" },
-    cancelled:     { label: "Cancelled",       className: "bg-red-100 text-red-800" },
-    failed:        { label: "Failed",          className: "bg-red-200 text-red-800" },
-  };
+const map = {
+  received:          { label: "received",        className: "bg-gray-200 text-gray-800" },
+  pending:           { label: "pending",         className: "bg-gray-200 text-gray-800" },
+  accepted:          { label: "accepted",        className: "bg-yellow-100 text-yellow-800" },
+  preparing:         { label: "preparing",       className: "bg-yellow-100 text-yellow-800" },
+  packed:            { label: "packed",          className: "bg-blue-100 text-blue-800" },
+  out_for_delivery:  { label: "out-for-delivery", className: "bg-indigo-100 text-indigo-800" },
+  delivered:         { label: "delivered",       className: "bg-green-100 text-green-800" },
+  completed:         { label: "delivered",       className: "bg-green-100 text-green-800" },
+  cancelled:         { label: "cancelled",       className: "bg-red-100 text-red-800" },
+  failed:            { label: "failed",          className: "bg-red-200 text-red-800" },
+};
+
 
   // allow both dash and underscore styles: map both "out-for-delivery" and "out_for_delivery"
   const altKey = key.replace(/-/g, "_");
@@ -44,7 +40,7 @@ function StatusBadge({ status }) {
   const entry = map[key] || map[altKey] || { label: status, className: "bg-gray-100 text-gray-800" };
   return (
     <span className={`inline-block px-2 py-0.5 text-xs rounded ${entry.className}`}>
-      {entry.label}
+      {entry.label.replace(/-/g, " ").replace(/\b\w/g, l => l.toUpperCase())}
     </span>
   );
 }
@@ -143,7 +139,7 @@ export default function OrderHistory({ open = false, onClose = () => {}, apiBase
               <div key={o._id} className="p-3 border rounded flex justify-between items-start bg-white">
                 <div className="flex-1">
                   <div className="flex items-center gap-3">
-                    <div className="font-medium">Order #{String(o.orderNumber ?? String(o._id)).slice(-6)}</div>
+                    <div className="font-medium">Order #{o.orderNumber ? String(o.orderNumber).padStart(6, "0") : String(o._id).slice(-6)}</div>
                     <div className="text-xs text-gray-500">{(new Date(o.createdAt)).toLocaleString()}</div>
                     <div className="ml-2">
                       <StatusBadge status={o.status} />
