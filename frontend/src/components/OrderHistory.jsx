@@ -27,6 +27,13 @@ function StatusBadge({ status }) {
   return <span className={`inline-block px-2 py-0.5 text-xs rounded ${m.className}`}>{m.label}</span>;
 }
 
+// helper to get canonical total from order object (supports different field names)
+function getOrderTotal(order) {
+  if (!order) return 0;
+  // prefer 'total' (backend), fall back to 'totalPrice', 'amount' etc if some other naming used
+  return Number(order.total ?? order.totalPrice ?? order.amount ?? 0);
+}
+
 export default function OrderHistory({ open = false, onClose = () => {}, apiBase = "", authToken = "", onReorder = () => {} }) {
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -54,41 +61,31 @@ export default function OrderHistory({ open = false, onClose = () => {}, apiBase
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
-  // inside OrderHistory.jsx — replace the existing fetchOrders function with this
-
-async function fetchOrders(pageToFetch = 1) {
-  setLoading(true);
-  try {
-    const base = apiBase || "";
-    const q = `${base}/api/customers/orders?page=${pageToFetch}&limit=${pageSize}`;
-
-    console.log("[OrderHistory] fetching", q, "token:", !!token);
-    const res = await fetch(q, {
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
-    });
-
-    console.log("[OrderHistory] response status:", res.status);
-    if (!res.ok) {
-      const txt = await res.text();
-      console.error("[OrderHistory] non-ok response:", res.status, txt);
-      // surface to user
+  async function fetchOrders(pageToFetch = 1) {
+    setLoading(true);
+    try {
+      const base = apiBase || "";
+      const q = `${base}/api/customers/orders?page=${pageToFetch}&limit=${pageSize}`;
+      const res = await fetch(q, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (!res.ok) {
+        // non-fatal: set empty
+        console.error("Failed to load orders", await res.text());
+        setOrders([]);
+        setLoading(false);
+        return;
+      }
+      const data = await res.json();
+      // assume data is array; if backend wraps with pagination adapt accordingly
+      setOrders(Array.isArray(data) ? data : (data.orders || []));
+    } catch (e) {
+      console.error("fetchOrders error", e);
       setOrders([]);
+    } finally {
       setLoading(false);
-      return;
     }
-
-    // try parse json, also log what we get
-    const data = await res.json();
-    console.log("[OrderHistory] payload:", data);
-    setOrders(Array.isArray(data) ? data : (data.orders || []));
-  } catch (e) {
-    console.error("fetchOrders error", e);
-    setOrders([]);
-  } finally {
-    setLoading(false);
   }
-}
-
 
   function openDetails(order) {
     setSelectedOrder(order);
@@ -124,7 +121,7 @@ async function fetchOrders(pageToFetch = 1) {
               <div key={o._id} className="p-3 border rounded flex justify-between items-start bg-white">
                 <div className="flex-1">
                   <div className="flex items-center gap-3">
-                    <div className="font-medium">Order #{String(o._id).slice(-6)}</div>
+                    <div className="font-medium">Order #{String(o.orderNumber ?? String(o._id)).slice(-6)}</div>
                     <div className="text-xs text-gray-500">{(new Date(o.createdAt)).toLocaleString()}</div>
                     <div className="ml-2">
                       <StatusBadge status={o.status} />
@@ -136,7 +133,7 @@ async function fetchOrders(pageToFetch = 1) {
                 </div>
 
                 <div className="flex flex-col items-end gap-2">
-                  <div className="text-sm font-semibold">₹{o.totalPrice}</div>
+                  <div className="text-sm font-semibold">₹{getOrderTotal(o)}</div>
                   <div className="flex gap-2">
                     <button onClick={() => openDetails(o)} className="px-3 py-1 border rounded text-sm">Details</button>
                     <button onClick={() => handleReorder(o)} className="px-3 py-1 bg-green-600 text-white rounded text-sm">Reorder</button>
@@ -162,7 +159,7 @@ async function fetchOrders(pageToFetch = 1) {
             <div className="absolute inset-0 bg-black/40" onClick={closeDetails} />
             <div className="relative bg-white rounded-lg w-[92%] max-w-2xl p-4 shadow-lg z-[11110]">
               <div className="flex items-center justify-between mb-3">
-                <h4 className="text-lg font-semibold">Order #{String(selectedOrder._id).slice(-6)} details</h4>
+                <h4 className="text-lg font-semibold">Order #{String(selectedOrder.orderNumber ?? String(selectedOrder._id)).slice(-6)} details</h4>
                 <button onClick={closeDetails} className="px-2 py-1 rounded bg-gray-100">Close</button>
               </div>
 
@@ -174,7 +171,7 @@ async function fetchOrders(pageToFetch = 1) {
                     {(selectedOrder.items || []).map((it, idx) => (
                       <div key={idx} className="flex justify-between">
                         <div className="text-sm">{it.name} <span className="text-xs text-gray-500">×{it.qty}</span></div>
-                        <div className="text-sm font-semibold">₹{(it.price||0) * (it.qty||1)}</div>
+                        <div className="text-sm font-semibold">₹{(Number(it.price||0) * Number(it.qty||1)).toFixed(0)}</div>
                       </div>
                     ))}
                   </div>
@@ -188,7 +185,7 @@ async function fetchOrders(pageToFetch = 1) {
 
                 <div className="flex justify-between items-center">
                   <div className="text-sm text-gray-600">Total</div>
-                  <div className="text-xl font-semibold">₹{selectedOrder.totalPrice}</div>
+                  <div className="text-xl font-semibold">₹{getOrderTotal(selectedOrder)}</div>
                 </div>
 
                 <div className="flex justify-end gap-2">
