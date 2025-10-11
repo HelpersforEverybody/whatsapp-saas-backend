@@ -682,58 +682,79 @@ function handleReorder(order) {
         </div>
       </div>
 
-      {/* Auth modal (Login / Signup w/ OTP) */}
-      {authModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-          <div className="bg-white p-4 rounded w-[420px]">
-            <div className="flex items-center justify-between mb-3">
-              <h3 className="font-semibold">{authMode === "login" ? "Login (phone only)" : "Signup (name + phone)"}</h3>
-              <div className="flex gap-2">
-                <button onClick={() => { setAuthMode("login"); setOtpSent(false); setAuthMsg(""); }} className={`px-2 py-1 rounded ${authMode === "login" ? "bg-gray-200" : "bg-white"}`}>Login</button>
-                <button onClick={() => { setAuthMode("signup"); setOtpSent(false); setAuthMsg(""); }} className={`px-2 py-1 rounded ${authMode === "signup" ? "bg-gray-200" : "bg-white"}`}>Signup</button>
-              </div>
-            </div>
+      {/* Auth modal (Login / Signup w/ OTP) — rendered as a portal to document.body with very high z */}
+{authModalOpen && typeof document !== "undefined" ? createPortal(
+  <div className="fixed inset-0 z-[12050] flex items-center justify-center">
+    {/* backdrop */}
+    <div className="absolute inset-0 bg-black/40" onClick={() => { setAuthModalOpen(false); setOtpSent(false); setAuthMsg(""); }} />
 
-            {!otpSent ? (
-              <>
-                {authMode === "signup" && (
-                  <div className="mb-2">
-                    <label className="text-sm block mb-1">Name</label>
-                    <input value={customerName} onChange={e => setCustomerName(e.target.value)} className="p-2 border rounded w-full" placeholder="Your full name" />
-                  </div>
-                )}
-
-                <div className="mb-2">
-                  <label className="text-sm block mb-1">Phone</label>
-                  <div className="flex items-center">
-                    <span className="px-3 py-2 bg-gray-100 select-none">+91</span>
-                    <input value={otpDigitsInput || customerPhone} onChange={e => handlePhoneInputDigits(e.target.value, setOtpDigitsInput)} placeholder="10-digit phone" className="p-2 border rounded flex-1" />
-                  </div>
-                </div>
-
-                <div className="flex justify-end gap-2 mt-3">
-                  <button onClick={() => { setAuthModalOpen(false); setOtpSent(false); setOtpDigitsInput(""); setAuthMsg(""); }} className="px-3 py-1 bg-gray-200 rounded">Cancel</button>
-                  <button onClick={() => sendOtpToPhone(otpDigitsInput || customerPhone, customerName)} className="px-3 py-1 bg-blue-600 text-white rounded">Send OTP</button>
-                </div>
-              </>
-            ) : (
-              <>
-                <div className="mb-2 text-sm">Enter OTP sent to {otpPhone}</div>
-                <input value={otpCode} onChange={e => setOtpCode(e.target.value.replace(/\D/g,'').slice(0,6))} placeholder="OTP" className="p-2 border rounded w-full mb-3" />
-                <div className="flex justify-between items-center">
-                  <div className="text-sm text-gray-600">{authMsg}</div>
-                  <div className="flex gap-2">
-                    <button onClick={() => { setOtpSent(false); setOtpCode(""); setAuthMsg(""); }} className="px-3 py-1 bg-gray-200 rounded">Back</button>
-                    <button onClick={verifyOtpAndLogin} className="px-3 py-1 bg-green-600 text-white rounded">Verify & Login</button>
-                  </div>
-                </div>
-              </>
-            )}
-
-            {authMsg && <div className="mt-3 text-sm text-red-600">{authMsg}</div>}
-          </div>
+    {/* modal */}
+    <div
+      className="relative bg-white p-4 rounded w-[420px] z-[12060] shadow-lg"
+      role="dialog"
+      aria-modal="true"
+      onClick={(e) => e.stopPropagation()}
+    >
+      <div className="flex items-center justify-between mb-3">
+        <h3 className="font-semibold">{authMode === "login" ? "Login (phone only)" : "Signup (name + phone)"}</h3>
+        <div className="flex gap-2">
+          <button
+            onClick={() => { setAuthMode("login"); setOtpSent(false); setAuthMsg(""); }}
+            className={`px-2 py-1 rounded ${authMode === "login" ? "bg-gray-200" : "bg-white"}`}
+          >
+            Login
+          </button>
+          <button
+            onClick={() => { setAuthMode("signup"); setOtpSent(false); setAuthMsg(""); }}
+            className={`px-2 py-1 rounded ${authMode === "signup" ? "bg-gray-200" : "bg-white"}`}
+          >
+            Signup
+          </button>
         </div>
+      </div>
+
+      {!otpSent ? (
+        <>
+          {authMode === "signup" && (
+            <div className="mb-2">
+              <label className="text-sm block mb-1">Name</label>
+              <input value={customerName} onChange={e => setCustomerName(e.target.value)} className="p-2 border rounded w-full" placeholder="Your full name" />
+            </div>
+          )}
+
+          <div className="mb-2">
+            <label className="text-sm block mb-1">Phone</label>
+            <div className="flex items-center">
+              <span className="px-3 py-2 bg-gray-100 select-none">+91</span>
+              <input value={otpDigitsInput || customerPhone} onChange={e => handlePhoneInputDigits(e.target.value, setOtpDigitsInput)} placeholder="10-digit phone" className="p-2 border rounded flex-1" />
+            </div>
+          </div>
+
+          <div className="flex justify-end gap-2 mt-3">
+            <button onClick={() => { setAuthModalOpen(false); setOtpSent(false); setOtpDigitsInput(""); setAuthMsg(""); }} className="px-3 py-1 bg-gray-200 rounded">Cancel</button>
+            <button onClick={() => sendOtpToPhone(otpDigitsInput || customerPhone, customerName)} className="px-3 py-1 bg-blue-600 text-white rounded">Send OTP</button>
+          </div>
+        </>
+      ) : (
+        <>
+          <div className="mb-2 text-sm">Enter OTP sent to {otpPhone}</div>
+          <input value={otpCode} onChange={e => setOtpCode(e.target.value.replace(/\D/g,'').slice(0,6))} placeholder="OTP" className="p-2 border rounded w-full mb-3" />
+          <div className="flex justify-between items-center">
+            <div className="text-sm text-gray-600">{authMsg}</div>
+            <div className="flex gap-2">
+              <button onClick={() => { setOtpSent(false); setOtpCode(""); setAuthMsg(""); }} className="px-3 py-1 bg-gray-200 rounded">Back</button>
+              <button onClick={verifyOtpAndLogin} className="px-3 py-1 bg-green-600 text-white rounded">Verify & Login</button>
+            </div>
+          </div>
+        </>
       )}
+
+      {authMsg && <div className="mt-3 text-sm text-red-600">{authMsg}</div>}
+    </div>
+  </div>,
+  document.body
+) : null}
+
 
       {/* Cart modal (confirm & place order) */}
       {cartModalOpen && (
