@@ -858,20 +858,7 @@ function handleReorder(order) {
   onClose={() => setOrderHistoryOpen(false)}
   apiBase={API_BASE}
   authToken={customerToken}
-  onReorder={(order) => {
-    // Example reorder behavior: replace cart with order items
-    const newCart = {};
-    (order.items || []).forEach(it => {
-      // attempt to match shop menu items by name/id if you store ids
-      // For now we insert synthetic ids using name to keep it simple:
-      const id = it._id || it.id || it.name;
-      newCart[id] = (newCart[id] || 0) + Number(it.qty || 1);
-    });
-    setCart(newCart);
-    setOrderHistoryOpen(false);
-    // open cart for user to review
-    setCartModalOpen(true);
-  }}
+  onReorder={handleReorder}
 />
     </div>
   );
