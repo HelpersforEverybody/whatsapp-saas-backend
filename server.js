@@ -6,7 +6,6 @@ const mongoose = require('mongoose');
 const http = require('http');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
-const cors = require('cors');
 
 const app = express();
 const server = http.createServer(app);
