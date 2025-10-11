@@ -18,6 +18,8 @@ export default function ShopManager() {
   const [loading, setLoading] = useState(false);
   const [orderHistoryOpen, setOrderHistoryOpen] = useState(false);
 
+  // toast state (new)
+  const [toast, setToast] = useState({ show: false, msg: "", type: "info" });
 
   // filter pincode
   const [pincode, setPincode] = useState("");
@@ -26,13 +28,12 @@ export default function ShopManager() {
   // cart map itemId -> qty
   const [cart, setCart] = useState({});
   useEffect(() => {
-  console.log('[STATE] menu changed', menu);
-}, [menu]);
+    console.log('[STATE] menu changed', menu);
+  }, [menu]);
 
-useEffect(() => {
-  console.log('[STATE] cart changed', cart);
-}, [cart]);
-
+  useEffect(() => {
+    console.log('[STATE] cart changed', cart);
+  }, [cart]);
 
   // auth / customer info
   const [customerToken, setCustomerToken] = useState(localStorage.getItem("customer_token") || "");
@@ -88,6 +89,25 @@ useEffect(() => {
   }, [selectedShop]);
 
   // -------------------------
+  // Toast helper & component
+  // -------------------------
+  function showToast(message, type = "info", ms = 3500) {
+    setToast({ show: true, msg: message, type });
+    window.setTimeout(() => setToast(t => ({ ...t, show: false })), ms);
+  }
+
+  function Toast() {
+    if (!toast.show) return null;
+    const colorClass = toast.type === "success" ? "bg-green-600" : toast.type === "error" ? "bg-red-600" : "bg-gray-800";
+    return createPortal(
+      <div className={`fixed right-4 bottom-6 z-[13000] ${colorClass} text-white px-4 py-2 rounded shadow-lg`}>
+        {toast.msg}
+      </div>,
+      document.body
+    );
+  }
+
+  // -------------------------
   // Data loading
   // -------------------------
   async function loadShops() {
@@ -107,6 +127,7 @@ useEffect(() => {
       }
     } catch (e) {
       console.error("Load shops error", e);
+      // keep old alert to avoid unexpected changes in other flows — we could use toast here too if you want
       alert("Failed to load shops");
     } finally {
       setLoading(false);
@@ -154,72 +175,69 @@ useEffect(() => {
     const totalPrice = items.reduce((s, i) => s + i.qty * i.price, 0);
     return { totalQty, totalPrice, items };
   }
+
   // replace existing handleReorder with this:
-// Replace existing handleReorder with this improved version
-// Improved handleReorder — paste this into ShopManager.jsx
-function handleReorder(order) {
-  if (!order || !Array.isArray(order.items)) {
-    console.warn('handleReorder called with invalid order', order);
-    return;
-  }
-
-  // snapshot of current menu
-  const currentMenu = Array.isArray(menu) ? menu.slice() : [];
-
-  // new cart keyed by item _id (or synthetic id)
-  const newCart = {};
-  const syntheticToAdd = [];
-
-  order.items.forEach(orderItem => {
-    const itemName = orderItem.name || "";
-    const itemQty = Number(orderItem.qty || 1);
-    const itemPrice = Number(orderItem.price || 0);
-    const itemExternal = orderItem.externalId || orderItem.external_id || null;
-    const itemIdFromOrder = orderItem._id || orderItem.id || null;
-
-    // Try to match an existing menu item by _id, externalId or name (case-insensitive)
-    const found = currentMenu.find(m =>
-      (itemIdFromOrder && String(m._id) === String(itemIdFromOrder)) ||
-      (itemExternal && m.externalId && String(m.externalId) === String(itemExternal)) ||
-      (m.name && String(m.name).trim().toLowerCase() === String(itemName).trim().toLowerCase())
-    );
-
-    if (found) {
-      const key = String(found._id);
-      newCart[key] = (newCart[key] || 0) + itemQty;
-    } else {
-      // create synthetic item that will be appended to menu
-      const syntheticId = `reorder_${Math.random().toString(36).slice(2, 9)}`;
-      const syntheticItem = {
-        _id: syntheticId,
-        name: itemName || "Item",
-        price: Number(itemPrice || 0),
-        available: true,
-        externalId: itemExternal || undefined,
-      };
-      syntheticToAdd.push(syntheticItem);
-      newCart[syntheticId] = (newCart[syntheticId] || 0) + itemQty;
+  function handleReorder(order) {
+    if (!order || !Array.isArray(order.items)) {
+      console.warn('handleReorder called with invalid order', order);
+      return;
     }
-  });
 
-  // Build new menu once (append synthetic items)
-  const newMenu = syntheticToAdd.length ? [...currentMenu, ...syntheticToAdd] : currentMenu;
+    // snapshot of current menu
+    const currentMenu = Array.isArray(menu) ? menu.slice() : [];
 
-  // DEBUG: log inside function (this will appear in browser console)
-  console.log('[handleReorder] newCart:', newCart);
-  console.log('[handleReorder] syntheticToAdd:', syntheticToAdd);
-  console.log('[handleReorder] newMenu length:', newMenu.length);
+    // new cart keyed by item _id (or synthetic id)
+    const newCart = {};
+    const syntheticToAdd = [];
 
-  // Apply state changes — setMenu then setCart
-  setMenu(newMenu);
-  setCart(newCart);
+    order.items.forEach(orderItem => {
+      const itemName = orderItem.name || "";
+      const itemQty = Number(orderItem.qty || 1);
+      const itemPrice = Number(orderItem.price || 0);
+      const itemExternal = orderItem.externalId || orderItem.external_id || null;
+      const itemIdFromOrder = orderItem._id || orderItem.id || null;
 
-  // Close history and open cart for review
-  setOrderHistoryOpen(false);
-  setCartModalOpen(true);
-}
+      // Try to match an existing menu item by _id, externalId or name (case-insensitive)
+      const found = currentMenu.find(m =>
+        (itemIdFromOrder && String(m._id) === String(itemIdFromOrder)) ||
+        (itemExternal && m.externalId && String(m.externalId) === String(itemExternal)) ||
+        (m.name && String(m.name).trim().toLowerCase() === String(itemName).trim().toLowerCase())
+      );
 
+      if (found) {
+        const key = String(found._id);
+        newCart[key] = (newCart[key] || 0) + itemQty;
+      } else {
+        // create synthetic item that will be appended to menu
+        const syntheticId = `reorder_${Math.random().toString(36).slice(2, 9)}`;
+        const syntheticItem = {
+          _id: syntheticId,
+          name: itemName || "Item",
+          price: Number(itemPrice || 0),
+          available: true,
+          externalId: itemExternal || undefined,
+        };
+        syntheticToAdd.push(syntheticItem);
+        newCart[syntheticId] = (newCart[syntheticId] || 0) + itemQty;
+      }
+    });
 
+    // Build new menu once (append synthetic items)
+    const newMenu = syntheticToAdd.length ? [...currentMenu, ...syntheticToAdd] : currentMenu;
+
+    // DEBUG: log inside function (this will appear in browser console)
+    console.log('[handleReorder] newCart:', newCart);
+    console.log('[handleReorder] syntheticToAdd:', syntheticToAdd);
+    console.log('[handleReorder] newMenu length:', newMenu.length);
+
+    // Apply state changes — setMenu then setCart
+    setMenu(newMenu);
+    setCart(newCart);
+
+    // Close history and open cart for review
+    setOrderHistoryOpen(false);
+    setCartModalOpen(true);
+  }
 
   // -------------------------
   // Validation helpers
@@ -297,9 +315,11 @@ function handleReorder(order) {
       setOtpSent(false);
       setOtpCode("");
       setAuthMsg("Logged in");
+      showToast("Logged in", "success");
     } catch (e) {
       console.error("verifyOtp error", e);
       setAuthMsg("Verify failed: " + (e.message || e));
+      showToast("Login failed: " + (e.message || e), "error");
     }
   }
 
@@ -346,35 +366,34 @@ function handleReorder(order) {
   }
 
   function openAddAddressModal(editIndex = null, opts = {}) {
-  const prefill = opts.prefill !== undefined ? Boolean(opts.prefill) : true;
+    const prefill = opts.prefill !== undefined ? Boolean(opts.prefill) : true;
 
-  if (typeof editIndex === "number") {
-    const existing = addresses[editIndex] || {};
-    const rawPhone = String(existing.phone || "");
-    const digits = rawPhone.replace(/\D/g, "").slice(-10);
-    setAddressForm({
-      label: existing.label || "Home",
-      name: existing.name || "",
-      phone: digits || "",
-      address: existing.address || "",
-      pincode: existing.pincode || (selectedShop ? selectedShop.pincode : ""),
-    });
-    setAddressEditIndex(editIndex);
-  } else {
-    // For "Add new" path — allow caller to choose whether to prefill
-    setAddressForm({
-      label: "Home",
-      name: prefill ? (customerName || "") : "",
-      phone: prefill ? ((customerPhone || "").replace(/\D/g, "").slice(-10)) : "",
-      address: "",
-      pincode: selectedShop?.pincode || "",
-    });
-    setAddressEditIndex(null);
+    if (typeof editIndex === "number") {
+      const existing = addresses[editIndex] || {};
+      const rawPhone = String(existing.phone || "");
+      const digits = rawPhone.replace(/\D/g, "").slice(-10);
+      setAddressForm({
+        label: existing.label || "Home",
+        name: existing.name || "",
+        phone: digits || "",
+        address: existing.address || "",
+        pincode: existing.pincode || (selectedShop ? selectedShop.pincode : ""),
+      });
+      setAddressEditIndex(editIndex);
+    } else {
+      // For "Add new" path — allow caller to choose whether to prefill
+      setAddressForm({
+        label: "Home",
+        name: prefill ? (customerName || "") : "",
+        phone: prefill ? ((customerPhone || "").replace(/\D/g, "").slice(-10)) : "",
+        address: "",
+        pincode: selectedShop?.pincode || "",
+      });
+      setAddressEditIndex(null);
+    }
+    setAddressMsg("");
+    setAddressModalOpen(true);
   }
-  setAddressMsg("");
-  setAddressModalOpen(true);
-}
-
 
   // add or update (server if logged-in)
   async function addOrUpdateAddress(editIndex = null) {
@@ -414,6 +433,7 @@ function handleReorder(order) {
       } catch (e) {
         console.error("addOrUpdateAddress error", e);
         setAddressMsg("Save failed: " + (e.message || e));
+        showToast("Save address failed: " + (e.message || e), "error");
       }
       return;
     }
@@ -432,6 +452,7 @@ function handleReorder(order) {
     saveAddressesToStore(copy);
     setAddressModalOpen(false);
     setAddressEditIndex(null);
+    showToast("Address saved", "success");
   }
 
   async function deleteAddress(idx) {
@@ -508,45 +529,45 @@ function handleReorder(order) {
   }
 
   function TopRightBadge() {
-  // keep My Orders visible regardless of login state OR only for logged-in
-  // in this example we'll show it only when logged in
-  if (customerToken) {
-    const displayName = (customerName && customerName.trim()) ? customerName : `+91${(customerPhone || "").slice(-10)}`;
-    return (
-      <div className="flex items-center gap-3">
-        {/* My Orders button */}
-        <button
-          onClick={() => setOrderHistoryOpen(true)}
-          className="px-3 py-1 bg-gray-100 rounded text-sm"
-        >
-          My Orders
-        </button>
+    // keep My Orders visible regardless of login state OR only for logged-in
+    // in this example we'll show it only when logged in
+    if (customerToken) {
+      const displayName = (customerName && customerName.trim()) ? customerName : `+91${(customerPhone || "").slice(-10)}`;
+      return (
+        <div className="flex items-center gap-3">
+          {/* My Orders button */}
+          <button
+            onClick={() => setOrderHistoryOpen(true)}
+            className="px-3 py-1 bg-gray-100 rounded text-sm"
+          >
+            My Orders
+          </button>
 
-        {/* Profile menu */}
-        <ProfileMenu
-          name={displayName}
-          phone={`+91${(customerPhone || "").slice(-10)}`}
-          onLogout={logoutCustomer}
-          addresses={addresses}
-          onOpenAddressModal={() => openAddAddressModal(null)}
-          onManageAddresses={() => setCartModalOpen(true)}
-        />
+          {/* Profile menu */}
+          <ProfileMenu
+            name={displayName}
+            phone={`+91${(customerPhone || "").slice(-10)}`}
+            onLogout={logoutCustomer}
+            addresses={addresses}
+            onOpenAddressModal={() => openAddAddressModal(null)}
+            onManageAddresses={() => setCartModalOpen(true)}
+          />
+        </div>
+      );
+    }
+
+    // not logged in
+    return (
+      <div>
+        <button
+          onClick={() => { setAuthMode("login"); setAuthModalOpen(true); }}
+          className="px-3 py-1 bg-blue-600 text-white rounded"
+        >
+          Login / Signup
+        </button>
       </div>
     );
   }
-
-  // not logged in
-  return (
-    <div>
-      <button
-        onClick={() => { setAuthMode("login"); setAuthModalOpen(true); }}
-        className="px-3 py-1 bg-blue-600 text-white rounded"
-      >
-        Login / Signup
-      </button>
-    </div>
-  );
-}
 
 
   // -------------------------
@@ -682,79 +703,68 @@ function handleReorder(order) {
         </div>
       </div>
 
-      {/* Auth modal (Login / Signup w/ OTP) — rendered as a portal to document.body with very high z */}
-{authModalOpen && typeof document !== "undefined" ? createPortal(
-  <div className="fixed inset-0 z-[12050] flex items-center justify-center">
-    {/* backdrop */}
-    <div className="absolute inset-0 bg-black/40" onClick={() => { setAuthModalOpen(false); setOtpSent(false); setAuthMsg(""); }} />
+      {/* Auth modal (Login / Signup w/ OTP) */}
+      {authModalOpen && typeof document !== "undefined" ? createPortal(
+        <div className="fixed inset-0 z-[12050] flex items-center justify-center">
+          {/* backdrop */}
+          <div className="absolute inset-0 bg-black/40" onClick={() => { setAuthModalOpen(false); setOtpSent(false); setAuthMsg(""); }} />
 
-    {/* modal */}
-    <div
-      className="relative bg-white p-4 rounded w-[420px] z-[12060] shadow-lg"
-      role="dialog"
-      aria-modal="true"
-      onClick={(e) => e.stopPropagation()}
-    >
-      <div className="flex items-center justify-between mb-3">
-        <h3 className="font-semibold">{authMode === "login" ? "Login (phone only)" : "Signup (name + phone)"}</h3>
-        <div className="flex gap-2">
-          <button
-            onClick={() => { setAuthMode("login"); setOtpSent(false); setAuthMsg(""); }}
-            className={`px-2 py-1 rounded ${authMode === "login" ? "bg-gray-200" : "bg-white"}`}
+          {/* modal */}
+          <div
+            className="relative bg-white p-4 rounded w-[420px] z-[12060] shadow-lg"
+            role="dialog"
+            aria-modal="true"
+            onClick={(e) => e.stopPropagation()}
           >
-            Login
-          </button>
-          <button
-            onClick={() => { setAuthMode("signup"); setOtpSent(false); setAuthMsg(""); }}
-            className={`px-2 py-1 rounded ${authMode === "signup" ? "bg-gray-200" : "bg-white"}`}
-          >
-            Signup
-          </button>
-        </div>
-      </div>
-
-      {!otpSent ? (
-        <>
-          {authMode === "signup" && (
-            <div className="mb-2">
-              <label className="text-sm block mb-1">Name</label>
-              <input value={customerName} onChange={e => setCustomerName(e.target.value)} className="p-2 border rounded w-full" placeholder="Your full name" />
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="font-semibold">{authMode === "login" ? "Login (phone only)" : "Signup (name + phone)"}</h3>
+              <div className="flex gap-2">
+                <button onClick={() => { setAuthMode("login"); setOtpSent(false); setAuthMsg(""); }} className={`px-2 py-1 rounded ${authMode === "login" ? "bg-gray-200" : "bg-white"}`}>Login</button>
+                <button onClick={() => { setAuthMode("signup"); setOtpSent(false); setAuthMsg(""); }} className={`px-2 py-1 rounded ${authMode === "signup" ? "bg-gray-200" : "bg-white"}`}>Signup</button>
+              </div>
             </div>
-          )}
 
-          <div className="mb-2">
-            <label className="text-sm block mb-1">Phone</label>
-            <div className="flex items-center">
-              <span className="px-3 py-2 bg-gray-100 select-none">+91</span>
-              <input value={otpDigitsInput || customerPhone} onChange={e => handlePhoneInputDigits(e.target.value, setOtpDigitsInput)} placeholder="10-digit phone" className="p-2 border rounded flex-1" />
-            </div>
+            {!otpSent ? (
+              <>
+                {authMode === "signup" && (
+                  <div className="mb-2">
+                    <label className="text-sm block mb-1">Name</label>
+                    <input value={customerName} onChange={e => setCustomerName(e.target.value)} className="p-2 border rounded w-full" placeholder="Your full name" />
+                  </div>
+                )}
+
+                <div className="mb-2">
+                  <label className="text-sm block mb-1">Phone</label>
+                  <div className="flex items-center">
+                    <span className="px-3 py-2 bg-gray-100 select-none">+91</span>
+                    <input value={otpDigitsInput || customerPhone} onChange={e => handlePhoneInputDigits(e.target.value, setOtpDigitsInput)} placeholder="10-digit phone" className="p-2 border rounded flex-1" />
+                  </div>
+                </div>
+
+                <div className="flex justify-end gap-2 mt-3">
+                  <button onClick={() => { setAuthModalOpen(false); setOtpSent(false); setOtpDigitsInput(""); setAuthMsg(""); }} className="px-3 py-1 bg-gray-200 rounded">Cancel</button>
+                  <button onClick={() => sendOtpToPhone(otpDigitsInput || customerPhone, customerName)} className="px-3 py-1 bg-blue-600 text-white rounded">Send OTP</button>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="mb-2 text-sm">Enter OTP sent to {otpPhone}</div>
+                <input value={otpCode} onChange={e => setOtpCode(e.target.value.replace(/\D/g,'').slice(0,6))} placeholder="OTP" className="p-2 border rounded w-full mb-3" />
+                <div className="flex justify-between items-center">
+                  <div className="text-sm text-gray-600">{authMsg}</div>
+                  <div className="flex gap-2">
+                    <button onClick={() => { setOtpSent(false); setOtpCode(""); setAuthMsg(""); }} className="px-3 py-1 bg-gray-200 rounded">Back</button>
+                    <button onClick={verifyOtpAndLogin} className="px-3 py-1 bg-green-600 text-white rounded">Verify & Login</button>
+                  </div>
+                </div>
+              </>
+            )}
+
+            {authMsg && <div className="mt-3 text-sm text-red-600">{authMsg}</div>}
           </div>
-
-          <div className="flex justify-end gap-2 mt-3">
-            <button onClick={() => { setAuthModalOpen(false); setOtpSent(false); setOtpDigitsInput(""); setAuthMsg(""); }} className="px-3 py-1 bg-gray-200 rounded">Cancel</button>
-            <button onClick={() => sendOtpToPhone(otpDigitsInput || customerPhone, customerName)} className="px-3 py-1 bg-blue-600 text-white rounded">Send OTP</button>
-          </div>
-        </>
-      ) : (
-        <>
-          <div className="mb-2 text-sm">Enter OTP sent to {otpPhone}</div>
-          <input value={otpCode} onChange={e => setOtpCode(e.target.value.replace(/\D/g,'').slice(0,6))} placeholder="OTP" className="p-2 border rounded w-full mb-3" />
-          <div className="flex justify-between items-center">
-            <div className="text-sm text-gray-600">{authMsg}</div>
-            <div className="flex gap-2">
-              <button onClick={() => { setOtpSent(false); setOtpCode(""); setAuthMsg(""); }} className="px-3 py-1 bg-gray-200 rounded">Back</button>
-              <button onClick={verifyOtpAndLogin} className="px-3 py-1 bg-green-600 text-white rounded">Verify & Login</button>
-            </div>
-          </div>
-        </>
-      )}
-
-      {authMsg && <div className="mt-3 text-sm text-red-600">{authMsg}</div>}
-    </div>
-  </div>,
-  document.body
-) : null}
-
+        </div>,
+        document.body
+      ) : null}
 
       {/* Cart modal (confirm & place order) */}
       {cartModalOpen && (
@@ -782,106 +792,113 @@ function handleReorder(order) {
               await fetchCustomerAddresses();
             } catch (e) {
               console.error("setDefaultAddress error", e);
-              alert("Set default failed: " + (e.message || e));
+              showToast("Set default failed: " + (e.message || e), "error");
             }
           }}
           onClose={() => setCartModalOpen(false)}
           onConfirm={async (addressIdx) => {
             const chosen = addresses[addressIdx];
-            if (!chosen) { alert("Select or add address first"); return; }
+            if (!chosen) { showToast("Select or add address first", "error"); return; }
             const result = await placeOrderFinal(chosen);
             if (result.ok) {
-              alert("Order placed successfully");
+              showToast("Order placed successfully", "success");
               setCartModalOpen(false);
+              // optionally clear cart already done in placeOrderFinal
             } else {
-              alert("Order failed: " + (result.message || "unknown"));
+              // show error nicely via toast
+              showToast("Order failed: " + (result.message || "unknown"), "error");
+              // If login required, open the auth modal above cart
+              if (result.message && String(result.message).toLowerCase().includes("login required")) {
+                setAuthMode("login");
+                setAuthModalOpen(true);
+              }
             }
           }}
         />
       )}
 
-     {/* Address Add/Edit portal modal: if the cart portal exists mount inside it (absolute),
+      {/* Address Add/Edit portal modal: if the cart portal exists mount inside it (absolute),
     otherwise fallback to document.body (fixed). */}
-{addressModalOpen && (() => {
-  const portalTarget = (typeof document !== "undefined") ? document.getElementById("cart-address-portal") : null;
-  const isInCart = !!portalTarget;
+      {addressModalOpen && (() => {
+        const portalTarget = (typeof document !== "undefined") ? document.getElementById("cart-address-portal") : null;
+        const isInCart = !!portalTarget;
 
-  // overlay and modal z-indexes must be above the cart manage panel z
- const overlayClass = isInCart
-  ? "fixed inset-0 z-[10040] flex items-center justify-center"
-  : "fixed inset-0 z-50 flex items-end justify-center";
+        // overlay and modal z-indexes must be above the cart manage panel z
+        const overlayClass = isInCart
+          ? "fixed inset-0 z-[10040] flex items-center justify-center"
+          : "fixed inset-0 z-50 flex items-end justify-center";
 
-  const backdropClass = "absolute inset-0 bg-black/40";
+        const backdropClass = "absolute inset-0 bg-black/40";
 
-  // ensure the modal itself has a higher z-index than the overlay
-  const modal = (
-    <div className={overlayClass} onClick={() => { setAddressModalOpen(false); setAddressEditIndex(null); }}>
-      <div className={backdropClass} />
-      <div
-        className="relative bg-white rounded-t-2xl w-full max-w-[520px] p-5 shadow-lg pointer-events-auto z-[10050]"
-        onClick={(e) => e.stopPropagation()}
-        style={{ transform: "none", position: isInCart ? "relative" : "static" }}
-      >
-        <div className="flex justify-between items-center mb-3">
-          <h3 className="text-lg font-semibold">{typeof addressEditIndex === "number" ? "Edit Address" : "Add New Address"}</h3>
-          <button onClick={() => { setAddressModalOpen(false); setAddressMsg(""); setAddressEditIndex(null); }} className="text-gray-600">✕</button>
-        </div>
-
-        <div className="flex gap-2 mb-3">
-          {["Home","Office","Other"].map(t => (
-            <button
-              key={t}
-              onClick={() => setAddressForm(f => ({ ...f, label: t }))}
-              className={`flex items-center gap-1 px-3 py-1 border rounded-full text-sm ${addressForm.label === t ? "bg-blue-100 border-blue-400" : "border-gray-200"}`}
+        // ensure the modal itself has a higher z-index than the overlay
+        const modal = (
+          <div className={overlayClass} onClick={() => { setAddressModalOpen(false); setAddressEditIndex(null); }}>
+            <div className={backdropClass} />
+            <div
+              className="relative bg-white rounded-t-2xl w-full max-w-[520px] p-5 shadow-lg pointer-events-auto z-[10050]"
+              onClick={(e) => e.stopPropagation()}
+              style={{ transform: "none", position: isInCart ? "relative" : "static" }}
             >
-              {t === "Home" && <Home size={14} />}
-              {t === "Office" && <Briefcase size={14} />}
-              {t === "Other" && <MapPin size={14} />}
-              {t}
-            </button>
-          ))}
-        </div>
+              <div className="flex justify-between items-center mb-3">
+                <h3 className="text-lg font-semibold">{typeof addressEditIndex === "number" ? "Edit Address" : "Add New Address"}</h3>
+                <button onClick={() => { setAddressModalOpen(false); setAddressMsg(""); setAddressEditIndex(null); }} className="text-gray-600">✕</button>
+              </div>
 
-        <div className="space-y-3">
-          <input placeholder="Receiver’s name *" value={addressForm.name} onChange={(e) => setAddressForm(f => ({ ...f, name: e.target.value }))} className="border rounded w-full p-2" />
+              <div className="flex gap-2 mb-3">
+                {["Home","Office","Other"].map(t => (
+                  <button
+                    key={t}
+                    onClick={() => setAddressForm(f => ({ ...f, label: t }))}
+                    className={`flex items-center gap-1 px-3 py-1 border rounded-full text-sm ${addressForm.label === t ? "bg-blue-100 border-blue-400" : "border-gray-200"}`}
+                  >
+                    {t === "Home" && <Home size={14} />}
+                    {t === "Office" && <Briefcase size={14} />}
+                    {t === "Other" && <MapPin size={14} />}
+                    {t}
+                  </button>
+                ))}
+              </div>
 
-          <div className="flex items-center border rounded overflow-hidden">
-            <span className="px-3 py-2 bg-gray-100 select-none">+91</span>
-            <input
-              placeholder="Phone (10 digits)*"
-              value={addressForm.phone}
-              onChange={(e) => setAddressForm(f => ({ ...f, phone: e.target.value.replace(/\D/g, "").slice(0,10) }))}
-              className="p-2 flex-1 outline-none"
-              maxLength={10}
-            />
+              <div className="space-y-3">
+                <input placeholder="Receiver’s name *" value={addressForm.name} onChange={(e) => setAddressForm(f => ({ ...f, name: e.target.value }))} className="border rounded w-full p-2" />
+
+                <div className="flex items-center border rounded overflow-hidden">
+                  <span className="px-3 py-2 bg-gray-100 select-none">+91</span>
+                  <input
+                    placeholder="Phone (10 digits)*"
+                    value={addressForm.phone}
+                    onChange={(e) => setAddressForm(f => ({ ...f, phone: e.target.value.replace(/\D/g, "").slice(0,10) }))}
+                    className="p-2 flex-1 outline-none"
+                    maxLength={10}
+                  />
+                </div>
+
+                <textarea placeholder="Complete address *" value={addressForm.address} onChange={(e) => setAddressForm(f => ({ ...f, address: e.target.value }))} className="border rounded w-full p-2 h-24" />
+
+                <input placeholder="Pincode *" value={addressForm.pincode} onChange={(e) => setAddressForm(f => ({ ...f, pincode: e.target.value.replace(/\D/g, "").slice(0,6) }))} className="border rounded w-full p-2" maxLength={6} />
+              </div>
+
+              <div className="mt-4 flex justify-end gap-2">
+                <button onClick={() => { setAddressModalOpen(false); setAddressMsg(""); setAddressEditIndex(null); }} className="px-3 py-1 bg-gray-200 rounded">Cancel</button>
+                <button onClick={() => addOrUpdateAddress(addressEditIndex)} className="px-4 py-1 bg-blue-600 text-white rounded">Save Address</button>
+              </div>
+
+              {addressMsg && <div className="mt-3 text-sm text-red-600">{addressMsg}</div>}
+            </div>
           </div>
+        );
 
-          <textarea placeholder="Complete address *" value={addressForm.address} onChange={(e) => setAddressForm(f => ({ ...f, address: e.target.value }))} className="border rounded w-full p-2 h-24" />
+        return createPortal(modal, document.body);
 
-          <input placeholder="Pincode *" value={addressForm.pincode} onChange={(e) => setAddressForm(f => ({ ...f, pincode: e.target.value.replace(/\D/g, "").slice(0,6) }))} className="border rounded w-full p-2" maxLength={6} />
-        </div>
-
-        <div className="mt-4 flex justify-end gap-2">
-          <button onClick={() => { setAddressModalOpen(false); setAddressMsg(""); setAddressEditIndex(null); }} className="px-3 py-1 bg-gray-200 rounded">Cancel</button>
-          <button onClick={() => addOrUpdateAddress(addressEditIndex)} className="px-4 py-1 bg-blue-600 text-white rounded">Save Address</button>
-        </div>
-
-        {addressMsg && <div className="mt-3 text-sm text-red-600">{addressMsg}</div>}
-      </div>
-    </div>
-  );
-
-  return createPortal(modal, document.body);
-
-})()}
-<OrderHistory
-  open={orderHistoryOpen}
-  onClose={() => setOrderHistoryOpen(false)}
-  apiBase={API_BASE}
-  authToken={customerToken}
-  onReorder={handleReorder}
-/>
+      })()}
+      <OrderHistory
+        open={orderHistoryOpen}
+        onClose={() => setOrderHistoryOpen(false)}
+        apiBase={API_BASE}
+        authToken={customerToken}
+        onReorder={handleReorder}
+      />
+      <Toast />
     </div>
   );
 }
-
