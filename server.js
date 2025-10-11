@@ -18,19 +18,17 @@ app.use('/api', ordersRouter);
 // cors options
 const corsOptions = {
   origin: (origin, callback) => {
-    // allow requests with no origin (e.g. curl, mobile apps)
-    if (!origin) return callback(null, true);
-    // allow the configured origin
+    if (!origin) return callback(null, true); // allow non-browser requests
     if (origin === FRONTEND_ORIGIN) return callback(null, true);
-    // otherwise block
-    callback(new Error('Not allowed by CORS'));
+    return callback(new Error('Not allowed by CORS'));
   },
   methods: ['GET','POST','PUT','PATCH','DELETE','OPTIONS'],
-  allowedHeaders: ['Content-Type','Authorization', 'x-api-key'],
+  allowedHeaders: ['Content-Type','Authorization','x-api-key'],
   credentials: true,
   preflightContinue: false,
   optionsSuccessStatus: 204
 };
+
 
 app.use(cors(corsOptions));
 
@@ -38,6 +36,8 @@ app.use(cors(corsOptions));
 const io = new Server(server, {
   cors: { origin: '*', methods: ['GET', 'POST', 'PATCH', 'PUT', 'DELETE'] },
 });
+const ordersRouter = require('./routes/orders');
+app.use('/api', ordersRouter);
 
 const PORT = process.env.PORT || 3000;
 
@@ -882,46 +882,77 @@ app.get('/api/customers/orders/:id', requireCustomer, async (req, res) => {
 
 /* Twilio webhook (unchanged) */
 app.post('/webhook/whatsapp', async (req, res) => {
-  const from = (req.body.From || req.body.from || '').toString();
+  // Twilio might send fields with different casing depending on config
+  const fromRaw = (req.body.From || req.body.from || '').toString();
   const rawBody = (req.body.Body || req.body.body || '').toString().trim();
-  console.log('Incoming WhatsApp:', from, rawBody);
-  const parts = rawBody.split(/\s+/).filter(Boolean);
+  console.log('Incoming WhatsApp:', fromRaw, rawBody);
+
+  const parts = (rawBody || '').split(/\s+/).filter(Boolean);
   const cmd = (parts[0] || '').toLowerCase();
+
   const MessagingResponse = require('twilio').twiml.MessagingResponse;
   const twiml = new MessagingResponse();
+
   try {
     if (cmd === 'menu' && parts[1]) {
       const shopPhone = parts[1];
       const shop = await Shop.findOne({ phone: shopPhone });
-      if (!shop) twiml.message(`Shop ${shopPhone} not found.`);
-      else {
+      if (!shop) {
+        twiml.message(`Shop ${shopPhone} not found.`);
+      } else {
         const items = await MenuItem.find({ shop: shop._id, available: true });
-        if (!items.length) twiml.message(`No items found for ${shop.name}.`);
-        else {
+        if (!items.length) {
+          twiml.message(`No items found for ${shop.name}.`);
+        } else {
           let msg = `Menu for ${shop.name}:\n`;
           items.forEach(it => (msg += `${it.externalId}. ${it.name} — ₹${it.price}\n`));
           msg += `\nTo order: order ${shop.phone} <itemId> <qty>`;
           twiml.message(msg);
         }
       }
+
     } else if (cmd === 'order' && parts[1] && parts[2] && parts[3]) {
+      // order <shopPhone> <itemExtId> <qty>
       const shopPhone = parts[1];
       const itemExt = parts[2];
       const qty = Math.max(1, parseInt(parts[3], 10) || 1);
+
       const shop = await Shop.findOne({ phone: shopPhone });
-      if (!shop) twiml.message(`Shop ${shopPhone} not found.`);
-      else {
+      if (!shop) {
+        twiml.message(`Shop ${shopPhone} not found.`);
+      } else {
         const item = await MenuItem.findOne({ shop: shop._id, externalId: itemExt });
-        if (!item) twiml.message(`Item ${itemExt} not found.`);
-        else {
-          const orderPayload = { shop: shop._1d, customerName: `WhatsApp:${from}`, phone: from.replace(/^whatsapp:/, ''), items: [{ name: item.name, qty, price: item.price }] };
-          const total = item.price * qty;
-          const order = await Order.create({ ...orderPayload, total });
-          sendWhatsAppMessageSafe(shop.phone, `📥 New order ${order._id} from ${order.phone} — ${item.name} x${qty} — ₹${total}`).catch(() => {});
-          twiml.message(`✅ Order placed: ${order._id}\nTotal: ₹${total}\nYou will receive updates here.`);
+        if (!item) {
+          twiml.message(`Item ${itemExt} not found.`);
+        } else {
+          // normalize customer phone (strip 'whatsapp:' prefix if present)
+          const fromPhone = (fromRaw || '').replace(/^whatsapp:/i, '').trim();
+          const normalizedPhone = normalizePhoneInput(fromPhone) || fromPhone; // fallback to raw if normalize fails
+
+          // prepare order payload (note: shop._id is used)
+          const orderPayload = {
+            shop: shop._id,
+            customerName: `WhatsApp:${fromPhone}`,
+            phone: normalizedPhone,
+            address: { label: 'WhatsApp', address: `WhatsApp order from ${fromPhone}`, phone: normalizedPhone, pincode: '' },
+            items: [{ name: item.name, qty, price: Number(item.price || 0) }],
+            total: Number(item.price || 0) * qty,
+            status: 'received',
+          };
+
+          const order = await Order.create(orderPayload);
+
+          // Notify shop/customer asynchronously (non-blocking)
+          sendWhatsAppMessageSafe(shop.phone, `📥 New order ${order._id} from ${order.phone} — ${item.name} x${qty} — ₹${order.total}`)
+            .catch(() => {});
+          sendWhatsAppMessageSafe(order.phone, `✅ Order received: ${order._id}. Total: ₹${order.total}`).catch(() => {});
+
+          twiml.message(`✅ Order placed: ${order._id}\nTotal: ₹${order.total}\nYou will receive updates here.`);
         }
       }
+
     } else if (cmd === 'status' && parts[1]) {
+      // status <orderId>
       try {
         const order = await Order.findById(parts[1]);
         if (!order) twiml.message(`Order ${parts[1]} not found.`);
@@ -929,13 +960,17 @@ app.post('/webhook/whatsapp', async (req, res) => {
       } catch (e) {
         twiml.message('Invalid order id.');
       }
+
     } else {
+      // default help message
       twiml.message('Welcome. Commands:\n1) menu <shopPhone>\n2) order <shopPhone> <itemId> <qty>\n3) status <orderId>');
     }
   } catch (err) {
     console.error('Webhook error:', err);
     twiml.message('Server error.');
   }
+
+  // Respond with TwiML XML
   res.writeHead(200, { 'Content-Type': 'text/xml' });
   res.end(twiml.toString());
 });
