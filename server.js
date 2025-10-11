@@ -576,8 +576,7 @@ app.post('/api/orders', async (req, res) => {
       total,
       status: 'received',
     };
-        // ensure we have an incremental order number
-    let orderNumber = null;
+        // ensure we have an incremental order numbe
     try {
       // use Counter to generate a globally incrementing orderNumber
       orderNumber = await Counter.next('orderNumber');
