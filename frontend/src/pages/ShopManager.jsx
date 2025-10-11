@@ -147,12 +147,16 @@ export default function ShopManager() {
     return { totalQty, totalPrice, items };
   }
   // replace existing handleReorder with this:
+// Replace existing handleReorder with this improved version
 function handleReorder(order) {
   if (!order || !Array.isArray(order.items)) return;
 
-  // Build new cart keyed by menu item _id (so cartSummary can find price/name from menu)
+  // Work with the current menu snapshot
+  const currentMenu = Array.isArray(menu) ? menu.slice() : [];
+
+  // Prepare new cart keyed by menu item _id (or synthetic id)
   const newCart = {};
-  let addedSynthetic = false;
+  const syntheticToAdd = [];
 
   order.items.forEach(orderItem => {
     const itemName = orderItem.name || "";
@@ -161,49 +165,42 @@ function handleReorder(order) {
     const itemExternal = orderItem.externalId || orderItem.external_id || null;
     const itemIdFromOrder = orderItem._id || orderItem.id || null;
 
-    // Try to find matching menu item in currently loaded menu
-    const found = menu.find(m =>
+    // Try to match by _id, externalId, then name (case-insensitive)
+    const found = currentMenu.find(m =>
       (itemIdFromOrder && String(m._id) === String(itemIdFromOrder)) ||
       (itemExternal && m.externalId && String(m.externalId) === String(itemExternal)) ||
       (m.name && String(m.name).trim().toLowerCase() === String(itemName).trim().toLowerCase())
     );
 
     if (found) {
-      // Use the actual menu item's _id so cartSummary will pick up current price
       const key = String(found._id);
       newCart[key] = (newCart[key] || 0) + itemQty;
     } else {
-      // No match — create a synthetic menu item and append to menu so cart can render it
-      // Generate a stable-ish synthetic id
+      // create a synthetic item object (kept in local array first)
       const syntheticId = `reorder_${Math.random().toString(36).slice(2, 9)}`;
       const syntheticItem = {
         _id: syntheticId,
         name: itemName || "Item",
-        price: itemPrice || 0,
+        price: Number(itemPrice || 0),
         available: true,
         externalId: itemExternal || undefined,
-        // keep shop relation empty — doesn't break cart rendering
       };
-
-      // append the synthetic item to menu only once per reorder run
-      setMenu(prevMenu => {
-        // avoid duplicates: if syntheticId already exists skip
-        if (prevMenu.some(m => String(m._id) === syntheticId)) return prevMenu;
-        return [...prevMenu, syntheticItem];
-      });
-
-      addedSynthetic = true;
+      syntheticToAdd.push(syntheticItem);
       newCart[syntheticId] = (newCart[syntheticId] || 0) + itemQty;
     }
   });
 
-  // set the cart and open cart modal for review
+  // If we have synthetic items, append them once to a new menu array and set it
+  const newMenu = syntheticToAdd.length ? [...currentMenu, ...syntheticToAdd] : currentMenu;
+  setMenu(newMenu);
+
+  // Now set cart. On next render both menu and cart will be up-to-date so lookups succeed.
   setCart(newCart);
+
+  // Close order history and open cart for user to review
   setOrderHistoryOpen(false);
-  // open cart for user to review immediately
   setCartModalOpen(true);
 }
-
 
 
   // -------------------------
