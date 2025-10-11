@@ -6,6 +6,7 @@ const mongoose = require('mongoose');
 const http = require('http');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
+const Counter = require('./models/Counter');
 
 const app = express();
 const server = http.createServer(app);
@@ -575,9 +576,29 @@ app.post('/api/orders', async (req, res) => {
       total,
       status: 'received',
     };
+        // ensure we have an incremental order number
+    let orderNumber = null;
+    try {
+      // use Counter to generate a globally incrementing orderNumber
+      orderNumber = await Counter.next('orderNumber');
+    } catch (e) {
+      console.error('Counter.next error (falling back to shop seq):', e);
+      // fallback to per-shop lastOrderNumber if Counter fails
+      if (shopId) {
+        const seq = await Shop.findByIdAndUpdate(shopId, { $inc: { lastOrderNumber: 1 } }, { new: true });
+        if (seq) orderNumber = seq.lastOrderNumber;
+      }
+    }
 
-    const order = await Order.create(orderPayload);
+    // set both shapes so whichever Order model is used downstream keeps working
+    const finalPayload = {
+      ...orderPayload,
+      orderNumber,
+      totalPrice: orderPayload.total,   // keep totalPrice for models/Order.js
+      itemsTotal: orderPayload.total,   // optional (we don't compute separate deliveryFee here)
+    };
 
+    const order = await Order.create(finalPayload);
     sendWhatsAppMessageSafe(normalizedPhone, `Hi ${customerName}, we received your order ${order.orderNumber ? `#${String(order.orderNumber).padStart(6,'0')}` : order._id}. Total: ₹${total}`).catch(() => {});
     try {
       emitOrderUpdate(order._id.toString(), {
