@@ -13,18 +13,40 @@ import React, { useEffect, useState, useRef } from "react";
  *  <OrderHistory open={open} onClose={...} onReorder={handleReorder} />
  */
 
+// normalize status + render colored badge
 function StatusBadge({ status }) {
+  if (!status) return null;
+
+  // normalize: lower-case, convert spaces or dashes to underscores
+  const key = String(status || "").toLowerCase().replace(/\s+/g, "_").replace(/-/g, "_");
+
   const map = {
-    pending: { label: "Pending", className: "bg-gray-100 text-gray-800" },
-    preparing: { label: "Preparing", className: "bg-yellow-100 text-yellow-800" },
-    ready: { label: "Ready", className: "bg-indigo-100 text-indigo-800" },
-    out_for_delivery: { label: "Out for delivery", className: "bg-blue-100 text-blue-800" },
-    delivered: { label: "Delivered", className: "bg-green-100 text-green-800" },
-    cancelled: { label: "Cancelled", className: "bg-red-100 text-red-800" },
-    failed: { label: "Failed", className: "bg-red-200 text-red-800" },
+    // customer-facing / owner-facing statuses and their visual style
+    received:      { label: "received",        className: "bg-gray-100 text-gray-800" },
+    pending:       { label: "pending",         className: "bg-gray-100 text-gray-800" },
+    accepted:      { label: "accepted",        className: "bg-indigo-100 text-indigo-800" }, // you may prefer another color
+    preparing:     { label: "preparing",       className: "bg-yellow-100 text-yellow-800" },
+    packed:        { label: "packed",          className: "bg-indigo-50 text-indigo-800" },
+    ready:         { label: "ready",           className: "bg-indigo-100 text-indigo-800" },
+    out_for_delivery: { label: "out-for-delivery", className: "bg-blue-100 text-blue-800" },
+    out_for_delivery_alt: { label: "out-for-delivery", className: "bg-blue-100 text-blue-800" },
+    out_for_delivery_dash: { label: "out-for-delivery", className: "bg-blue-100 text-blue-800" },
+    out_for_delivery_text: { label: "out-for-delivery", className: "bg-blue-100 text-blue-800" },
+    delivered:     { label: "Delivered",       className: "bg-green-100 text-green-800" },
+    completed:     { label: "Delivered",       className: "bg-green-100 text-green-800" },
+    cancelled:     { label: "Cancelled",       className: "bg-red-100 text-red-800" },
+    failed:        { label: "Failed",          className: "bg-red-200 text-red-800" },
   };
-  const m = map[status] || { label: status || "Unknown", className: "bg-gray-100 text-gray-800" };
-  return <span className={`inline-block px-2 py-0.5 text-xs rounded ${m.className}`}>{m.label}</span>;
+
+  // allow both dash and underscore styles: map both "out-for-delivery" and "out_for_delivery"
+  const altKey = key.replace(/-/g, "_");
+
+  const entry = map[key] || map[altKey] || { label: status, className: "bg-gray-100 text-gray-800" };
+  return (
+    <span className={`inline-block px-2 py-0.5 text-xs rounded ${entry.className}`}>
+      {entry.label}
+    </span>
+  );
 }
 
 // helper to get canonical total from order object (supports different field names)
