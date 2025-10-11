@@ -835,7 +835,6 @@ app.get('/api/customers/orders/:id', requireCustomer, async (req, res) => {
   }
 });
 
-/* Twilio webhook (improved) */
 app.post('/webhook/whatsapp', async (req, res) => {
   // Twilio might send fields with different casing depending on config
   const fromRaw = (req.body.From || req.body.from || '').toString();
@@ -902,14 +901,16 @@ app.post('/webhook/whatsapp', async (req, res) => {
           if (missing.length) {
             twiml.message(`Item(s) not found: ${missing.join(', ')}. Check the menu and use the external Ids shown.`);
           } else {
+            // Build items array with pricing and line totals
             const items = pairs.map(p => {
               const mi = foundByExt[p.itemExt];
               const price = Number(mi.price || 0);
               const qty = Number(p.qty || 1);
-              return { name: mi.name, qty, price };
+              const lineTotal = price * qty;
+              return { name: mi.name, qty, price, lineTotal };
             });
 
-            const itemsTotal = items.reduce((s, it) => s + Number(it.price || 0) * Number(it.qty || 1), 0);
+            const itemsTotal = items.reduce((s, it) => s + (Number(it.lineTotal || 0)), 0);
             const deliveryFee = 0;
             const total = itemsTotal + deliveryFee;
 
@@ -947,14 +948,18 @@ app.post('/webhook/whatsapp', async (req, res) => {
 
             const displayId = order.orderNumber ? `#${String(order.orderNumber).padStart(6, '0')}` : String(order._id);
 
-            // notify shop & customer
+            // Build pretty item lines for messages
+            const itemLines = items.map(i => `${i.name} ×${i.qty} — ₹${i.price} = ₹${i.lineTotal}`).join('\n');
+
+            // notify shop & customer with detailed breakdown
             sendWhatsAppMessageSafe(
               shop.phone,
-              `📥 New order ${displayId} from ${order.phone} — ${items.map(i => `${i.name} x${i.qty}`).join(', ')} — ₹${order.total}`
+              `📥 New order ${displayId} from ${order.phone}\n\n${itemLines}\n\nTotal: ₹${order.total}`
             ).catch(()=>{});
+
             sendWhatsAppMessageSafe(
               order.phone,
-              `✅ Order placed: ${displayId}. Total: ₹${order.total}`
+              `✅ Order placed: ${displayId}\n\n${itemLines}\n\nTotal: ₹${order.total}\nYou will receive updates here.`
             ).catch(()=>{});
 
             // socket emit
@@ -967,7 +972,8 @@ app.post('/webhook/whatsapp', async (req, res) => {
               });
             } catch (e) { console.error('Socket emit error (webhook):', e); }
 
-            twiml.message(`✅ Order placed: ${displayId}\nTotal: ₹${order.total}\nYou will receive updates here.`);
+            // reply to webhook sender
+            twiml.message(`✅ Order placed: ${displayId}\n\n${items.map(i => `${i.name} ×${i.qty} — ₹${i.price} = ₹${i.lineTotal}`).join('\n')}\n\nTotal: ₹${order.total}\nYou will receive updates here.`);
           }
         }
       }
@@ -995,6 +1001,7 @@ app.post('/webhook/whatsapp', async (req, res) => {
   res.writeHead(200, { 'Content-Type': 'text/xml' });
   res.end(twiml.toString());
 });
+
 
 
 /* Finally, if you have a separate routes/orders.js file (you do),
